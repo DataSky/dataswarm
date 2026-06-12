@@ -1012,6 +1012,10 @@ function ArtifactPanel({
                       <span>{artifact.status}</span>
                       <span>{artifact.contentHash ? truncateHash(artifact.contentHash) : "no hash"}</span>
                     </div>
+                    <div className="flex items-center justify-between gap-2 font-mono text-[11px] text-[var(--muted)]">
+                      <span>{artifact.artifactKind ?? artifact.mimeType ?? "artifact"}</span>
+                      <span>{formatProvenanceCount(artifact)}</span>
+                    </div>
                   </button>
                 ))
               )}
@@ -1053,7 +1057,10 @@ function ArtifactPanel({
                     <ArtifactMeta label="Size" value={formatBytes(selectedArtifact.sizeBytes)} />
                     <ArtifactMeta label="Run" value={selectedArtifact.runId} />
                     <ArtifactMeta label="Hash" value={selectedArtifact.contentHash ? truncateHash(selectedArtifact.contentHash) : "n/a"} />
+                    <ArtifactMeta label="Kind" value={selectedArtifact.artifactKind ?? "n/a"} />
+                    <ArtifactMeta label="Preview" value={selectedArtifact.previewMode ?? "n/a"} />
                   </div>
+                  <ArtifactProvenance artifact={selectedArtifact} />
                   {Object.keys(selectedArtifact.metadata).length > 0 ? (
                     <details className="rounded-md border border-[var(--line)] bg-white px-2 py-1.5">
                       <summary className="cursor-pointer font-medium text-[var(--muted)]">Metadata</summary>
@@ -1079,6 +1086,47 @@ function ArtifactPanel({
   );
 }
 
+function ArtifactProvenance({ artifact }: { artifact: ArtifactRecord }) {
+  const hasProvenance =
+    artifact.sourceTraceId ||
+    artifact.createdByToolCallId ||
+    artifact.sourceObservationIds.length > 0 ||
+    artifact.branchIds.length > 0;
+
+  if (!hasProvenance) {
+    return (
+      <div className="rounded-md border border-dashed border-[var(--line)] bg-white px-2 py-1.5 text-[11px] text-[var(--muted)]">
+        No provenance metadata recorded for this artifact.
+      </div>
+    );
+  }
+
+  return (
+    <details className="rounded-md border border-[var(--line)] bg-white px-2 py-1.5" open>
+      <summary className="cursor-pointer text-[11px] font-semibold uppercase text-[var(--muted)]">Provenance</summary>
+      <div className="mt-2 grid gap-2 font-mono text-[11px] text-[var(--muted)]">
+        {artifact.sourceTraceId ? <KeyValueLine label="trace" value={artifact.sourceTraceId} /> : null}
+        {artifact.createdByToolCallId ? <KeyValueLine label="tool call" value={artifact.createdByToolCallId} /> : null}
+        {artifact.branchIds.length > 0 ? <KeyValueLine label="branches" value={artifact.branchIds.join(", ")} /> : null}
+        {artifact.sourceObservationIds.length > 0 ? (
+          <KeyValueLine label="observations" value={artifact.sourceObservationIds.join(", ")} />
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+function KeyValueLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid grid-cols-[84px_minmax(0,1fr)] gap-2">
+      <span className="uppercase">{label}</span>
+      <span className="truncate text-[var(--foreground)]" title={value}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
 function ArtifactMeta({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0 rounded-md bg-white px-2 py-1.5">
@@ -1086,6 +1134,14 @@ function ArtifactMeta({ label, value }: { label: string; value: string }) {
       <div className="truncate font-mono text-[11px]">{value}</div>
     </div>
   );
+}
+
+function formatProvenanceCount(artifact: ArtifactRecord) {
+  const counts = [
+    artifact.sourceObservationIds.length > 0 ? `${artifact.sourceObservationIds.length} obs` : null,
+    artifact.branchIds.length > 0 ? `${artifact.branchIds.length} branch` : null,
+  ].filter(Boolean);
+  return counts.length > 0 ? counts.join(" · ") : "no provenance";
 }
 
 type PreviewSchemaKind = "html.document" | "html.fragment";

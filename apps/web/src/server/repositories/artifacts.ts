@@ -17,6 +17,12 @@ export type ArtifactRecord = {
   contentHash: string | null;
   storageUri: string | null;
   previewUri: string | null;
+  sourceTraceId: string | null;
+  artifactKind: string | null;
+  previewMode: string | null;
+  sourceObservationIds: string[];
+  branchIds: string[];
+  createdByToolCallId: string | null;
   metadata: Record<string, unknown>;
   createdAt: string;
 };
@@ -34,6 +40,7 @@ type ArtifactRow = {
   content_hash: string | null;
   storage_uri: string | null;
   preview_uri: string | null;
+  source_trace_id: string | null;
   metadata_json: string | null;
   created_at: string;
 };
@@ -315,7 +322,7 @@ export async function listArtifacts(conversationId: string): Promise<ArtifactRec
     .prepare(
       `SELECT a.id, a.run_id, a.type, a.mime_type, a.title, a.status, a.current_version_id,
               av.version, av.size_bytes, av.content_hash,
-              a.storage_uri, a.preview_uri, a.metadata_json, a.created_at
+              a.storage_uri, a.preview_uri, a.source_trace_id, a.metadata_json, a.created_at
        FROM artifacts a
        LEFT JOIN artifact_versions av ON av.id = a.current_version_id
        WHERE a.conversation_id = ?
@@ -341,7 +348,7 @@ export async function getArtifact(id: string): Promise<ArtifactRecord | null> {
     .prepare(
       `SELECT a.id, a.run_id, a.type, a.mime_type, a.title, a.status, a.current_version_id,
               av.version, av.size_bytes, av.content_hash,
-              a.storage_uri, a.preview_uri, a.metadata_json, a.created_at
+              a.storage_uri, a.preview_uri, a.source_trace_id, a.metadata_json, a.created_at
        FROM artifacts a
        LEFT JOIN artifact_versions av ON av.id = a.current_version_id
        WHERE a.id = ?`,
@@ -351,7 +358,30 @@ export async function getArtifact(id: string): Promise<ArtifactRecord | null> {
   return row ? mapArtifact(row) : null;
 }
 
+export async function mergeArtifactMetadata(
+  artifactId: string,
+  patch: Record<string, unknown>,
+): Promise<ArtifactRecord | null> {
+  const db = await getDb();
+  const row = db
+    .prepare("SELECT metadata_json FROM artifacts WHERE id = ?")
+    .get(artifactId) as { metadata_json: string | null } | undefined;
+
+  if (!row) {
+    return null;
+  }
+
+  const merged = mergeMetadata(parseMetadata(row.metadata_json), patch);
+  db.prepare("UPDATE artifacts SET metadata_json = ?, updated_at = ? WHERE id = ?").run(
+    JSON.stringify(merged),
+    nowIso(),
+    artifactId,
+  );
+  return getArtifact(artifactId);
+}
+
 function mapArtifact(row: ArtifactRow): ArtifactRecord {
+  const metadata = parseMetadata(row.metadata_json);
   return {
     id: row.id,
     runId: row.run_id,
@@ -365,7 +395,13 @@ function mapArtifact(row: ArtifactRow): ArtifactRecord {
     contentHash: row.content_hash,
     storageUri: row.storage_uri,
     previewUri: row.preview_uri,
-    metadata: parseMetadata(row.metadata_json),
+    sourceTraceId: row.source_trace_id,
+    artifactKind: stringOrNull(metadata.artifactKind),
+    previewMode: stringOrNull(metadata.previewMode),
+    sourceObservationIds: uniqueStrings(metadata.sourceObservationIds),
+    branchIds: uniqueStrings(metadata.branchIds ?? metadata.branchId),
+    createdByToolCallId: stringOrNull(metadata.createdByToolCallId),
+    metadata,
     createdAt: row.created_at,
   };
 }
@@ -379,6 +415,30 @@ function parseMetadata(value: string | null): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function mergeMetadata(current: Record<string, unknown>, patch: Record<string, unknown>) {
+  const merged: Record<string, unknown> = { ...current };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) {
+      continue;
+    }
+    if (key === "sourceObservationIds" || key === "branchIds" || key === "sourceArtifactIds") {
+      merged[key] = uniqueStrings([...(uniqueStrings(merged[key])), ...(uniqueStrings(value))]);
+      continue;
+    }
+    merged[key] = value;
+  }
+  return merged;
+}
+
+function stringOrNull(value: unknown) {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function uniqueStrings(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
+  return Array.from(new Set(values.filter((item): item is string => typeof item === "string" && item.length > 0)));
 }
 
 function escapeHtml(value: string) {

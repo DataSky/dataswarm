@@ -67,7 +67,7 @@ try {
   try {
     const imageArtifacts = db
       .prepare(
-        `SELECT a.id, a.title, a.type, a.mime_type, a.status, a.storage_uri, a.preview_uri,
+        `SELECT a.id, a.title, a.type, a.mime_type, a.status, a.storage_uri, a.preview_uri, a.metadata_json,
                 av.size_bytes, av.content_hash
          FROM artifacts a
          LEFT JOIN artifact_versions av ON av.id = a.current_version_id
@@ -155,28 +155,29 @@ try {
 
     const branchObservations = db
       .prepare(
-        `SELECT metadata_json
+        `SELECT id, metadata_json
          FROM observations
          WHERE run_id = ? AND source_type = 'agent' AND source_name LIKE 'swarm.branch.%'
          ORDER BY created_at ASC`,
       )
       .all(runId)
-      .map((row) => parseJson(row.metadata_json, {}));
+      .map((row) => ({ id: row.id, metadata: parseJson(row.metadata_json, {}) }));
+    const branchObservationMetadata = branchObservations.map((item) => item.metadata);
     expect(
       "branch observations record image artifact ids",
-      branchObservations.length >= 1 &&
-        branchObservations.every(
+      branchObservationMetadata.length >= 1 &&
+        branchObservationMetadata.every(
           (metadata) =>
             Array.isArray(metadata.image_artifact_ids) &&
             metadata.image_artifact_ids.some((id) => imageArtifactIds.includes(id)),
         ) &&
-        branchObservations.some(
+        branchObservationMetadata.some(
           (metadata) =>
             Array.isArray(metadata.image_artifact_ids) &&
             metadata.image_artifact_ids.some((id) => imageArtifactIds.includes(id)),
         ),
       JSON.stringify(
-        branchObservations.map((metadata) => ({
+        branchObservationMetadata.map((metadata) => ({
           branch_id: metadata.branch_id,
           artifact_ids: metadata.artifact_ids,
           image_artifact_ids: metadata.image_artifact_ids,
@@ -187,14 +188,14 @@ try {
     );
     expect(
       "all branches reference the canonical image artifact",
-      branchObservations.every(
+      branchObservationMetadata.every(
         (metadata) =>
           Array.isArray(metadata.image_artifact_ids) &&
           metadata.image_artifact_ids.length === 1 &&
           metadata.image_artifact_ids[0] === imageArtifactIds[0],
       ),
       JSON.stringify(
-        branchObservations.map((metadata) => ({
+        branchObservationMetadata.map((metadata) => ({
           branch_id: metadata.branch_id,
           artifact_ids: metadata.artifact_ids,
           image_artifact_ids: metadata.image_artifact_ids,
@@ -202,6 +203,23 @@ try {
           branch_artifacts: metadata.branch_artifacts,
         })),
       ),
+    );
+    const imageArtifactMetadata = parseJson(imageArtifacts[0]?.metadata_json, {});
+    const branchIds = Array.isArray(imageArtifactMetadata.branchIds) ? imageArtifactMetadata.branchIds : [];
+    const sourceObservationIds = Array.isArray(imageArtifactMetadata.sourceObservationIds)
+      ? imageArtifactMetadata.sourceObservationIds
+      : [];
+    expect(
+      "canonical image artifact records branch provenance",
+      branchIds.length === branchObservationMetadata.length &&
+        branchObservationMetadata.every((metadata) => branchIds.includes(metadata.branch_id)),
+      JSON.stringify({ branchIds, branchObservationMetadata: branchObservationMetadata.map((metadata) => metadata.branch_id) }),
+    );
+    expect(
+      "canonical image artifact records source observations",
+      sourceObservationIds.length === branchObservations.length &&
+        branchObservations.every((observation) => sourceObservationIds.includes(observation.id)),
+      JSON.stringify({ sourceObservationIds, branchObservationIds: branchObservations.map((observation) => observation.id) }),
     );
 
     const verifyPayload = latestEventPayload(db, runId, "swarm.verify");
@@ -220,8 +238,25 @@ try {
       "conversation artifacts API returns image artifacts",
       imageArtifactIds.length > 0 &&
         apiImageArtifacts.length === imageArtifactIds.length &&
-        apiImageArtifacts.every((artifact) => artifact.type === "image" && artifact.status === "preview_ready"),
+        apiImageArtifacts.every(
+          (artifact) =>
+            artifact.type === "image" &&
+            artifact.status === "preview_ready" &&
+            artifact.artifactKind === "image" &&
+            artifact.previewMode === "image",
+        ),
       JSON.stringify(artifactsResponse),
+    );
+    expect(
+      "conversation artifacts API exposes artifact provenance",
+      apiImageArtifacts.every(
+        (artifact) =>
+          Array.isArray(artifact.branchIds) &&
+          artifact.branchIds.length === branchObservationMetadata.length &&
+          Array.isArray(artifact.sourceObservationIds) &&
+          artifact.sourceObservationIds.length === branchObservations.length,
+      ),
+      JSON.stringify(apiImageArtifacts),
     );
 
     const previewResponse = await fetch(`${baseUrl}/api/artifacts/${imageArtifactIds[0]}/preview`);

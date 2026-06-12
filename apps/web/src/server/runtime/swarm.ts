@@ -1,5 +1,5 @@
 import { createAgentSession, updateAgentSessionStatus } from "../repositories/agent-sessions";
-import { createBinaryArtifact, createTextArtifact } from "../repositories/artifacts";
+import { createBinaryArtifact, createTextArtifact, mergeArtifactMetadata } from "../repositories/artifacts";
 import { createContextBundle } from "../repositories/context-bundles";
 import { createObservation } from "../repositories/observations";
 import { createSandboxSession } from "../repositories/sandbox-sessions";
@@ -472,6 +472,15 @@ export async function executeSwarm(input: {
       title: `${branch.title} Result`,
       content: result.outputMarkdown,
       sourceTraceId: input.parentTraceId,
+      metadata: {
+        branchId: branch.id,
+        branchIds: [branch.id],
+        branchTitle: branch.title,
+        planSource: plan.planSource,
+        sandboxSessionId: sandbox.id,
+        agentSessionId: branchAgent.id,
+        contextBundleId: bundle.id,
+      },
     });
     pushUnique(artifactIds, artifact.id);
 
@@ -557,6 +566,13 @@ export async function executeSwarm(input: {
       },
     });
     branchObservationIds.push(branchObservation.id);
+    for (const branchArtifact of branchArtifacts) {
+      await mergeArtifactMetadata(branchArtifact.id, {
+        sourceObservationIds: [branchObservation.id],
+        branchIds: [branch.id],
+        latestBranchObservationId: branchObservation.id,
+      });
+    }
     await publishBranchObservationEvent({
       runId: input.runId,
       conversationId: input.conversationId,
@@ -1028,6 +1044,7 @@ async function recoverSandboxArtifacts(input: {
       sourceTraceId: input.traceId,
       metadata: {
         branchId: input.branchId,
+        branchIds: [input.branchId],
         sandboxArtifactKind: kind,
         sandboxSha256: sandboxArtifact.sha256,
         sandboxBytes: sandboxArtifact.bytes,

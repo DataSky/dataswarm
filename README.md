@@ -16,7 +16,7 @@ DataSwarm is not yet the final full swarm platform. It is a working V2 foundatio
 | Tool catalog | Real | Generic tool capabilities with provider/auth/risk/schema metadata |
 | Web search | Real/mock-gated | `web.search` is the model-facing capability; Tavily is one provider behind it |
 | Trace diagnostics | Real | `trace.query`, conversation diagnostics, runtime consistency checks |
-| Artifacts | Real/expanding | Markdown, HTML, image preview, content-hash de-dupe |
+| Artifacts | Real/expanding | Markdown, HTML, image preview, content-hash de-dupe, provenance fields |
 | Skills | Partial/managed | Local skill registry, enable/disable/install/update, model-visible manifests |
 | Swarm | Planner-owned mock/local + gated E2B | `spawn_swarm`, branch traces, reducer/verifier/reviewer, sandbox artifact recovery |
 | E2B | Gated real path | SDK/template/readiness/live-smoke contracts exist; real execution requires local credentials and template verification |
