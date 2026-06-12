@@ -29,7 +29,7 @@ Implemented and verified:
 | `web.search` capability adapter | Real or mock-gated | model-facing generic `web_search` tool with provider registry; Tavily is the default real provider and `mock.search` is the built-in deterministic validation provider |
 | `tavily.search` provider adapter | Real or mock-gated | direct provider adapter retained for compatibility and diagnostics; not the planner strategy |
 | `trace.query` adapter | Real | conversation/run/trace diagnostics |
-| `artifact.create` adapter | Real | Markdown/HTML artifacts plus sandbox-recovered images with content-hash de-dupe and artifact provenance fields |
+| `artifact.create` adapter | Real | Markdown/HTML artifacts plus sandbox-recovered images with content-hash de-dupe, artifact provenance fields, and qualitySignals |
 | `file.read` adapter | Real | workspace-local file reads only |
 | `approval.request` adapter | Real | creates pending approval records; Run Trace/API support approve/reject decisions |
 | Skills | Managed local registry with local install/update | model can select enabled skills and receives V2 manifests; UI/API can inspect, enable/disable, install, and update local skill packs; remote marketplace flow still pending |
@@ -198,7 +198,7 @@ Additional product smoke scenarios:
 5. Trace diagnosis uses `trace.query`.
 6. Skills UI/API can install or update a local skill pack and synchronize it into SQLite without manual DB edits.
 7. Missing credentials, missing built templates, or deferred sandbox execution are explicit in trace metadata.
-8. Artifact drawer shows content-hash de-duped artifacts across Markdown, HTML, and sandbox-recovered images, with provenance metadata for trace, source observations, and branch usage.
+8. Artifact drawer shows content-hash de-duped artifacts across Markdown, HTML, and sandbox-recovered images, with provenance metadata for trace, `sourceObservationIds`, branch usage, and artifact `qualitySignals`.
 9. Sandbox branch execution emits heartbeat, internal action/observation, artifact recovery manifest events, one durable parent-level branch Observation per branch, `swarm.reduce` reduced branch evidence, merge summaries, `swarm.verify` checks, and explicit `swarm.review` skipped/mock/model state; failed/cancelled branches appear in reduction, merge, verification, and review results.
 9a. Sandbox visualization requests recover image artifacts into the local Artifact store, content-hash de-dupe identical branch images to one canonical artifact, append every branch observation to that canonical artifact provenance, publish image-mode preview events, attach image artifact preview parts to the assistant message, return image bytes from preview APIs, expose provenance through the conversation artifacts API/UI, and pass the requested-image swarm verifier check.
 10. Sandbox retry policy is bounded, retryable-error scoped, and records attempt metadata.

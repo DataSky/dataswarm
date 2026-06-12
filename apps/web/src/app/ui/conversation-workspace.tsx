@@ -1061,6 +1061,7 @@ function ArtifactPanel({
                     <ArtifactMeta label="Preview" value={selectedArtifact.previewMode ?? "n/a"} />
                   </div>
                   <ArtifactProvenance artifact={selectedArtifact} />
+                  <ArtifactQuality artifact={selectedArtifact} />
                   {Object.keys(selectedArtifact.metadata).length > 0 ? (
                     <details className="rounded-md border border-[var(--line)] bg-white px-2 py-1.5">
                       <summary className="cursor-pointer font-medium text-[var(--muted)]">Metadata</summary>
@@ -1083,6 +1084,24 @@ function ArtifactPanel({
         </div>
       ) : null}
     </aside>
+  );
+}
+
+function ArtifactQuality({ artifact }: { artifact: ArtifactRecord }) {
+  const entries = Object.entries(artifact.qualitySignals ?? {}).filter(([, value]) => value !== null && value !== undefined);
+  if (entries.length === 0) {
+    return null;
+  }
+
+  return (
+    <details className="rounded-md border border-[var(--line)] bg-white px-2 py-1.5" open>
+      <summary className="cursor-pointer text-[11px] font-semibold uppercase text-[var(--muted)]">Quality</summary>
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        {entries.slice(0, 8).map(([key, value]) => (
+          <ArtifactMeta key={key} label={humanizeKey(key)} value={formatQualityValue(value)} />
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -1142,6 +1161,23 @@ function formatProvenanceCount(artifact: ArtifactRecord) {
     artifact.branchIds.length > 0 ? `${artifact.branchIds.length} branch` : null,
   ].filter(Boolean);
   return counts.length > 0 ? counts.join(" · ") : "no provenance";
+}
+
+function formatQualityValue(value: unknown) {
+  if (typeof value === "boolean") {
+    return value ? "yes" : "no";
+  }
+  if (typeof value === "number") {
+    return String(value);
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  return JSON.stringify(value);
+}
+
+function humanizeKey(value: string) {
+  return value.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
 }
 
 type PreviewSchemaKind = "html.document" | "html.fragment";

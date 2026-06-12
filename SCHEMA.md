@@ -14,7 +14,7 @@ Agentic Runtime V2 adds these active tables and metadata contracts on top of the
 | Observations | `observations` persists normalized evidence from tools, skills, artifacts, agents, users, and system blockers |
 | Tools | `tools.metadata_json` and `schema_json` feed the `ToolCapability` catalog |
 | Tool calls | `tool_calls` store adapter input/output summaries and payload URIs |
-| Artifacts | `artifacts.metadata_json` now includes `artifactKind`, `contentHash`, `previewMode`, `sourceObservationIds`, `branchIds`, and source/tool provenance metadata |
+| Artifacts | `artifacts.metadata_json` now includes `artifactKind`, `contentHash`, `previewMode`, `sourceObservationIds`, `branchIds`, `qualitySignals`, and source/tool provenance metadata |
 | Trace | `trace_spans` remains the durable execution tree and is cross-linked from run events |
 
 Implemented tool rows should currently include model-facing `web.search`, provider/direct `tavily.search`, `trace.query`, `artifact.create`, `file.read`, and `approval.request`. `web.search` is the default `web_search` capability exposed to the planner; its seeded input schema exposes an optional `provider` enum (`tavily`, `mock`), and its Observation metadata records `logical_tool_name`, `provider_tool_name`, and `provider` so diagnostics can distinguish planner choice from provider execution.

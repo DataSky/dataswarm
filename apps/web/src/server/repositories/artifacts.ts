@@ -23,6 +23,7 @@ export type ArtifactRecord = {
   sourceObservationIds: string[];
   branchIds: string[];
   createdByToolCallId: string | null;
+  qualitySignals: Record<string, unknown>;
   metadata: Record<string, unknown>;
   createdAt: string;
 };
@@ -139,12 +140,23 @@ export async function createTextArtifact(input: {
       artifactUri,
       previewUri,
       input.sourceTraceId ?? null,
-      JSON.stringify({
-        artifactKind: input.type === "html" ? "html_document" : "markdown_document",
-        contentHash,
-        previewMode: "html",
-        ...(input.metadata ?? {}),
-      }),
+      JSON.stringify(
+        withArtifactQualitySignals(
+          {
+            artifactKind: input.type === "html" ? "html_document" : "markdown_document",
+            contentHash,
+            previewMode: "html",
+            ...(input.metadata ?? {}),
+          },
+          {
+            type: input.type,
+            mimeType,
+            sizeBytes: Buffer.byteLength(input.content, "utf8"),
+            contentHash,
+            status: "preview_ready",
+          },
+        ),
+      ),
       now,
       now,
     );
@@ -267,12 +279,23 @@ export async function createBinaryArtifact(input: {
       artifactUri,
       artifactUri,
       input.sourceTraceId ?? null,
-      JSON.stringify({
-        artifactKind: "image",
-        contentHash,
-        previewMode: "image",
-        ...(input.metadata ?? {}),
-      }),
+      JSON.stringify(
+        withArtifactQualitySignals(
+          {
+            artifactKind: "image",
+            contentHash,
+            previewMode: "image",
+            ...(input.metadata ?? {}),
+          },
+          {
+            type: input.type,
+            mimeType: input.mimeType,
+            sizeBytes: input.content.byteLength,
+            contentHash,
+            status: "preview_ready",
+          },
+        ),
+      ),
       now,
       now,
     );
@@ -371,7 +394,7 @@ export async function mergeArtifactMetadata(
     return null;
   }
 
-  const merged = mergeMetadata(parseMetadata(row.metadata_json), patch);
+  const merged = withArtifactQualitySignals(mergeMetadata(parseMetadata(row.metadata_json), patch));
   db.prepare("UPDATE artifacts SET metadata_json = ?, updated_at = ? WHERE id = ?").run(
     JSON.stringify(merged),
     nowIso(),
@@ -401,6 +424,7 @@ function mapArtifact(row: ArtifactRow): ArtifactRecord {
     sourceObservationIds: uniqueStrings(metadata.sourceObservationIds),
     branchIds: uniqueStrings(metadata.branchIds ?? metadata.branchId),
     createdByToolCallId: stringOrNull(metadata.createdByToolCallId),
+    qualitySignals: recordOrEmpty(metadata.qualitySignals),
     metadata,
     createdAt: row.created_at,
   };
@@ -430,6 +454,40 @@ function mergeMetadata(current: Record<string, unknown>, patch: Record<string, u
     merged[key] = value;
   }
   return merged;
+}
+
+function withArtifactQualitySignals(
+  metadata: Record<string, unknown>,
+  artifact?: {
+    type?: string;
+    mimeType?: string;
+    sizeBytes?: number;
+    contentHash?: string;
+    status?: string;
+  },
+) {
+  const sourceObservationIds = uniqueStrings(metadata.sourceObservationIds);
+  const branchIds = uniqueStrings(metadata.branchIds ?? metadata.branchId);
+  const existing = recordOrEmpty(metadata.qualitySignals);
+  return {
+    ...metadata,
+    qualitySignals: {
+      ...existing,
+      artifactType: artifact?.type ?? stringOrNull(metadata.artifactKind) ?? "unknown",
+      mimeType: artifact?.mimeType ?? stringOrNull(metadata.mimeType) ?? null,
+      status: artifact?.status ?? "preview_ready",
+      sizeBytes: artifact?.sizeBytes ?? existing.sizeBytes ?? null,
+      hasContentHash: Boolean(artifact?.contentHash ?? metadata.contentHash),
+      previewReady: metadata.previewMode === "html" || metadata.previewMode === "image",
+      sourceObservationCount: sourceObservationIds.length,
+      branchCount: branchIds.length,
+      provenanceComplete: sourceObservationIds.length > 0 || branchIds.length > 0 || Boolean(metadata.createdByToolCallId),
+    },
+  };
+}
+
+function recordOrEmpty(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 function stringOrNull(value: unknown) {

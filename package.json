@@ -17,6 +17,7 @@
     "verify:e2b": "node scripts/canonical-verification-runner.mjs --phase phase4 --only e2b-readiness,e2b-live-receipt,e2b-live-sandbox,e2b-orchestrator-e2e",
     "verify:e2b:strict": "node scripts/canonical-verification-runner.mjs --phase phase4 --only e2b-live-sandbox,e2b-orchestrator-e2e --require-live-e2b",
     "smoke:agentic-v2": "node scripts/agentic-loop-v2-smoke.mjs",
+    "smoke:artifact": "node scripts/artifact-quality-smoke.mjs",
     "smoke:sandbox": "node scripts/sandbox-agent-smoke.mjs",
     "smoke:swarm-verifier": "node scripts/swarm-verifier-smoke.mjs",
     "smoke:swarm-image": "node scripts/swarm-image-artifact-e2e-smoke.mjs",

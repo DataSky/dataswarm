@@ -258,6 +258,18 @@ try {
       ),
       JSON.stringify(apiImageArtifacts),
     );
+    expect(
+      "conversation artifacts API exposes artifact quality signals",
+      apiImageArtifacts.every(
+        (artifact) =>
+          artifact.qualitySignals?.hasContentHash === true &&
+          artifact.qualitySignals?.previewReady === true &&
+          artifact.qualitySignals?.provenanceComplete === true &&
+          artifact.qualitySignals?.sourceObservationCount === branchObservations.length &&
+          artifact.qualitySignals?.branchCount === branchObservationMetadata.length,
+      ),
+      JSON.stringify(apiImageArtifacts.map((artifact) => artifact.qualitySignals)),
+    );
 
     const previewResponse = await fetch(`${baseUrl}/api/artifacts/${imageArtifactIds[0]}/preview`);
     const previewBytes = Buffer.from(await previewResponse.arrayBuffer());
