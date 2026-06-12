@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "dataswarm.skill.v1",
+  "name": "trace-diagnostics",
+  "version": "0.2.0",
+  "purpose": "Diagnose DataSwarm conversations, runs, traces, spans, tool calls, UI behavior, and execution quality regressions.",
+  "activationGuidance": [
+    "Use when the user provides a conversation id, run id, trace id, or asks why an agentic execution failed.",
+    "Use before making claims about runtime behavior, tool usage, trace health, or UI/event consistency.",
+    "Prefer trace.query and include concrete remediation plus verification steps."
+  ],
+  "requiredTools": ["trace.query"],
+  "preferredCapabilities": ["trace_query"],
+  "inputContract": {
+    "requires": ["conversation_id, run_id, trace_id, or explicit diagnostic target"],
+    "optional": ["suspected issue", "expected behavior"]
+  },
+  "outputContract": {
+    "expectedObservations": ["trace"],
+    "finalAnswerRequirements": [
+      "cite trace/query observation id",
+      "separate confirmed failures from hypotheses",
+      "include concrete fix and verification recommendations"
+    ]
+  },
+  "qualityChecks": [
+    "call trace.query before diagnosing persisted behavior",
+    "flag mock data, empty sources, stale spans, failed tools, and false-positive evals",
+    "connect UI symptoms to run events when possible"
+  ],
+  "riskLevel": "low",
+  "tags": ["trace", "diagnostics", "observability", "quality"]
+}

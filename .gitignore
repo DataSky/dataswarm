@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+apps/web/node_modules/
+
+# Next.js
+apps/web/.next/
+apps/web/out/
+
+# Local DataSwarm runtime state
+data/
+apps/web/data/
+
+# Environment files
+.env
+.env.*
+!.env.example
+LLM推理服务相关信息.md
+
+# Logs
+*.log
+npm-debug.log*
+
+# Build caches
+*.tsbuildinfo
+__pycache__/
+*.py[cod]
+.tmp/
+
+# OS/editor
+.DS_Store

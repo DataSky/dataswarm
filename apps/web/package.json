@@ -1,0 +1,30 @@
+{
+  "name": "web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "DATASWARM_SANDBOX_PROVIDER=mock DATASWARM_DATA_DIR=../../data DATASWARM_WORKSPACE_ROOT=../.. next dev",
+    "dev:mock": "DATASWARM_MOCK_MODEL=1 DATASWARM_MOCK_TOOLS=1 DATASWARM_SANDBOX_PROVIDER=mock DATASWARM_DATA_DIR=../../data DATASWARM_WORKSPACE_ROOT=../.. next dev",
+    "build": "DATASWARM_DATA_DIR=../../data DATASWARM_WORKSPACE_ROOT=../.. next build",
+    "start": "DATASWARM_DATA_DIR=../../data DATASWARM_WORKSPACE_ROOT=../.. next start",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@e2b/code-interpreter": "^2.6.0",
+    "lucide-react": "^1.17.0",
+    "next": "16.2.7",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.7",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "dataswarm.skill.v1",
+  "name": "report-generation",
+  "version": "0.2.0",
+  "purpose": "Create Markdown or HTML artifacts from verified observations and conversation context.",
+  "activationGuidance": [
+    "Use when the user asks for a report, HTML deliverable, Markdown deliverable, executive summary, or persisted artifact.",
+    "Use only after enough observations exist or when the user explicitly wants a report based on current conversation context.",
+    "Do not dump raw HTML in the chat response; choose create_artifact after evidence is available."
+  ],
+  "requiredTools": ["artifact.create"],
+  "preferredCapabilities": ["artifact_create"],
+  "inputContract": {
+    "requires": ["artifact title", "artifact type", "source observation ids or synthesis context"],
+    "optional": ["audience", "format style", "sections"]
+  },
+  "outputContract": {
+    "expectedObservations": ["artifact"],
+    "finalAnswerRequirements": [
+      "summarize artifact purpose",
+      "mention artifact id when available",
+      "do not repeat full artifact source unless requested"
+    ]
+  },
+  "qualityChecks": [
+    "artifact is created through artifact.create adapter",
+    "artifact metadata includes source observations when available",
+    "duplicate content is de-duped by content hash"
+  ],
+  "riskLevel": "low",
+  "tags": ["report", "artifact", "markdown", "html"]
+}

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "dataswarm.skill.v1",
+  "name": "web-research",
+  "version": "0.2.0",
+  "purpose": "Collect current or external evidence for research, news, source-backed summaries, and fact verification.",
+  "activationGuidance": [
+    "Use when the user explicitly asks to search, research, look up, verify, compare sources, or collect citations.",
+    "Use for time-sensitive claims, latest progress, market/news questions, or follow-up questions that require fresh evidence.",
+    "Do not use for simple conversation or when existing observations already fully answer the user."
+  ],
+  "requiredTools": ["tavily.search"],
+  "preferredCapabilities": ["web_search"],
+  "inputContract": {
+    "requires": ["user research objective", "search query or named entity"],
+    "optional": ["date constraints", "domain constraints", "source quality preference"]
+  },
+  "outputContract": {
+    "expectedObservations": ["web_search"],
+    "finalAnswerRequirements": [
+      "cite source titles and URLs from observations",
+      "separate strong findings from weak or off-topic results",
+      "state limitations when source coverage is insufficient"
+    ]
+  },
+  "qualityChecks": [
+    "at least one non-empty external source observation for fresh research",
+    "do not claim search success when sources are empty",
+    "re-query with broader or more targeted terms when results are weak"
+  ],
+  "riskLevel": "low",
+  "tags": ["research", "web", "sources", "evidence"]
+}

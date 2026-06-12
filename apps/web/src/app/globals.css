@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f6f8fb;
+  --workspace: #f8fafc;
+  --foreground: #17202a;
+  --muted: #6b7280;
+  --surface: #ffffff;
+  --surface-2: #f3f6fa;
+  --line: #d9e2ec;
+  --sidebar: #fbfcfe;
+  --sidebar-foreground: #1f2937;
+  --sidebar-muted: #667085;
+  --sidebar-line: #dbe4ee;
+  --sidebar-active: #e8f7f4;
+  --sidebar-hover: #f1f6fb;
+  --sidebar-soft: #f6f9fc;
+  --accent: #0f766e;
+  --accent-muted: #5bb3aa;
+  --accent-soft: #dff5f2;
+  --accent-2: #0ea5a0;
+  --blue: #2563eb;
+  --blue-soft: #dbeafe;
+  --success: #15803d;
+  --success-soft: #dcfce7;
+  --warning: #a16207;
+  --warning-soft: #fef3c7;
+  --danger: #b42318;
+  --disabled: #e5e7eb;
+  --user-surface: #eaf1ff;
+  --user-foreground: #172554;
+  --user-line: #bad0ff;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, monospace;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+a,
+select,
+textarea {
+  border-radius: 8px;
+}
+
+iframe {
+  border-radius: 8px;
+}

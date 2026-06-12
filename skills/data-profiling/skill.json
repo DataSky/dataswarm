@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "dataswarm.skill.v1",
+  "name": "data-profiling",
+  "version": "0.2.0",
+  "purpose": "Inspect tabular, JSON, or uploaded data for schema, quality, missingness, anomalies, and initial analysis readiness.",
+  "activationGuidance": [
+    "Use when the user provides or references CSV, JSON, tables, spreadsheets, logs, or datasets.",
+    "Use when the task asks for schema, missing values, distributions, anomalies, profiling, or data quality.",
+    "Prefer file_read before making claims about local or uploaded data contents."
+  ],
+  "requiredTools": ["file.read"],
+  "preferredCapabilities": ["file_read", "data_profile"],
+  "inputContract": {
+    "requires": ["file path, upload reference, or pasted data"],
+    "optional": ["profiling objective", "target columns", "quality thresholds"]
+  },
+  "outputContract": {
+    "expectedObservations": ["local_file", "computed_result"],
+    "finalAnswerRequirements": [
+      "state data source and row/field coverage when known",
+      "separate observed profile results from assumptions",
+      "recommend next profiling or cleaning steps"
+    ]
+  },
+  "qualityChecks": [
+    "do not infer file contents without a file observation",
+    "flag truncation or sampling limitations",
+    "preserve source file path or upload id in trace metadata"
+  ],
+  "riskLevel": "low",
+  "tags": ["data", "profiling", "csv", "json", "quality"]
+}
