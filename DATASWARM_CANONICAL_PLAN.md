@@ -173,6 +173,8 @@ node scripts/self-improvement-summary-smoke.mjs
 node scripts/self-improvement-summary-api-smoke.mjs
 node scripts/trace-diagnostics-improvements-smoke.mjs
 node scripts/trace-diagnostics-sandbox-smoke.mjs
+node scripts/trace-diagnostics-runtime-consistency-smoke.mjs
+node scripts/trace-diagnostics-ui-smoke.mjs
 node scripts/canonical-verification-diagnostics-smoke.mjs
 node scripts/canonical-goal-audit-smoke.mjs
 node scripts/canonical-goal-audit.mjs

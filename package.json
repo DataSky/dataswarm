@@ -25,6 +25,6 @@
     "smoke:swarm": "node scripts/swarm-action-plan-smoke.mjs && node scripts/swarm-reducer-smoke.mjs && node scripts/swarm-verifier-smoke.mjs",
     "smoke:swarm-trace": "node scripts/swarm-trace-ui-smoke.mjs",
     "smoke:self-improvement": "node scripts/self-improvement-async-smoke.mjs && node scripts/self-improvement-lifecycle-smoke.mjs && node scripts/self-improvement-summary-smoke.mjs",
-    "smoke:trace-diagnostics": "node scripts/trace-diagnostics-sandbox-smoke.mjs && node scripts/trace-diagnostics-improvements-smoke.mjs && node scripts/trace-diagnostics-runtime-consistency-smoke.mjs"
+    "smoke:trace-diagnostics": "node scripts/trace-diagnostics-sandbox-smoke.mjs && node scripts/trace-diagnostics-improvements-smoke.mjs && node scripts/trace-diagnostics-runtime-consistency-smoke.mjs && node scripts/trace-diagnostics-ui-smoke.mjs"
   }
 }

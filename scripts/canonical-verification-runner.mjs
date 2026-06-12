@@ -55,6 +55,8 @@ const gates = [
   phaseGate("phase5", "self-improvement-summary-api", "node scripts/self-improvement-summary-api-smoke.mjs"),
   phaseGate("phase5", "trace-diagnostics-improvements", "node scripts/trace-diagnostics-improvements-smoke.mjs"),
   phaseGate("phase5", "trace-diagnostics-sandbox", "node scripts/trace-diagnostics-sandbox-smoke.mjs"),
+  phaseGate("phase5", "trace-diagnostics-runtime-consistency", "node scripts/trace-diagnostics-runtime-consistency-smoke.mjs"),
+  phaseGate("phase5", "trace-diagnostics-ui", "node scripts/trace-diagnostics-ui-smoke.mjs"),
   phaseGate("phase5", "canonical-verification-diagnostics", "node scripts/canonical-verification-diagnostics-smoke.mjs"),
   phaseGate("phase5", "canonical-goal-audit-smoke", "node scripts/canonical-goal-audit-smoke.mjs"),
 ];

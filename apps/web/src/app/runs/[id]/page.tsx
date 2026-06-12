@@ -17,6 +17,7 @@ import { getConversation } from "@/server/repositories/conversations";
 import { listEvalResults } from "@/server/repositories/eval-results";
 import { listRunEventsAfter, type RunEventEnvelope } from "@/server/repositories/events";
 import { listObservedLogsForConversation } from "@/server/repositories/logs";
+import { diagnoseConversation } from "@/server/repositories/diagnostics";
 import { getRun } from "@/server/repositories/runs";
 import { listSandboxSessions } from "@/server/repositories/sandbox-sessions";
 import { listSelfImprovementCandidates, summarizeSelfImprovementCandidates } from "@/server/repositories/self-improvement";
@@ -46,7 +47,20 @@ type TraceSpanRow = {
   attributes_json?: string | null;
 };
 
-const views = ["overview", "sessions", "swarm", "trace", "spans", "events", "evals", "approvals", "improvements", "system", "logs"] as const;
+const views = [
+  "overview",
+  "diagnostics",
+  "sessions",
+  "swarm",
+  "trace",
+  "spans",
+  "events",
+  "evals",
+  "approvals",
+  "improvements",
+  "system",
+  "logs",
+] as const;
 
 export default async function RunPage({ params, searchParams }: RunPageProps) {
   const { id } = await params;
@@ -59,8 +73,9 @@ export default async function RunPage({ params, searchParams }: RunPageProps) {
     notFound();
   }
 
-  const [conversation, events, spans, agentSessions, sandboxSessions, evals, approvals, improvements, systemSnapshot, logs] = await Promise.all([
+  const [conversation, diagnostics, events, spans, agentSessions, sandboxSessions, evals, approvals, improvements, systemSnapshot, logs] = await Promise.all([
     getConversation(run.conversationId),
+    diagnoseConversation(run.conversationId),
     listRunEventsAfter(id, 0),
     listTraceSpans(id) as Promise<TraceSpanRow[]>,
     listAgentSessions(id),
@@ -149,6 +164,7 @@ export default async function RunPage({ params, searchParams }: RunPageProps) {
             improvements={filteredImprovements.length}
           />
         ) : null}
+        {view === "diagnostics" ? <Diagnostics diagnostic={diagnostics} /> : null}
         {view === "sessions" ? <Sessions agents={filteredAgents} sandboxes={filteredSandboxes} /> : null}
         {view === "swarm" ? <SwarmTimeline events={filteredEvents} /> : null}
         {view === "trace" ? <TraceGroups groups={traceGroups} /> : null}
@@ -161,6 +177,131 @@ export default async function RunPage({ params, searchParams }: RunPageProps) {
         {view === "logs" ? <Logs logs={filteredLogs} /> : null}
       </div>
     </main>
+  );
+}
+
+function Diagnostics({ diagnostic }: { diagnostic: Awaited<ReturnType<typeof diagnoseConversation>> }) {
+  if (!diagnostic) {
+    return (
+      <Panel title="Conversation Diagnostics">
+        <EmptyState label="No diagnostics available" />
+      </Panel>
+    );
+  }
+  const summary = diagnostic.summary;
+  const runtime = summary.runtimeConsistency;
+  const productHealth = summary.productHealth;
+  const observations = summary.observations;
+  const sandbox = summary.sandbox;
+  const canonical = summary.canonicalVerification;
+  const remediation = summary.remediation;
+  const highRiskCount = remediation.filter((item) => item.severity === "high").length;
+
+  return (
+    <section className="grid gap-4">
+      <Panel title="Conversation Health">
+        <div className="grid gap-3">
+          <div className="grid gap-2 md:grid-cols-4">
+            <Metric icon={<Activity className="size-4" />} label="Runs" value={summary.runCount} />
+            <Metric icon={<Activity className="size-4" />} label="Events" value={summary.eventCount} />
+            <Metric icon={<GitBranch className="size-4" />} label="Trace Spans" value={summary.traceSpanCount} />
+            <Metric icon={<Sparkles className="size-4" />} label="Remediation" value={`${remediation.length} total / ${highRiskCount} high`} />
+            <Metric icon={<CheckCircle2 className="size-4" />} label="Stale Activities" value={runtime.staleRunningActivityCount} />
+            <Metric icon={<CheckCircle2 className="size-4" />} label="Stale Spans" value={runtime.staleTraceSpanCount} />
+            <Metric icon={<Server className="size-4" />} label="Sandbox Failures" value={sandbox.preflightFailureCount} />
+            <Metric icon={<CheckCircle2 className="size-4" />} label="Canonical Failed" value={canonical.failed} />
+          </div>
+          <div className="grid gap-2">
+            {summary.diagnosis.slice(0, 10).map((item) => (
+              <div key={item} className="rounded-lg border border-[var(--line)] bg-[var(--surface-2)] px-3 py-2 text-sm leading-6 text-[var(--foreground)]">
+                {item}
+              </div>
+            ))}
+          </div>
+        </div>
+      </Panel>
+
+      <section className="grid gap-4 xl:grid-cols-2">
+        <Panel title="Runtime Consistency">
+          <div className="grid gap-3">
+            <div className="grid gap-2 md:grid-cols-2">
+              <Metric icon={<Activity className="size-4" />} label="Activities" value={runtime.activityCount} />
+              <Metric icon={<CheckCircle2 className="size-4" />} label="Open" value={runtime.openActivityCount} />
+              <Metric icon={<CheckCircle2 className="size-4" />} label="Stale Activities" value={runtime.staleRunningActivityCount} />
+              <Metric icon={<CheckCircle2 className="size-4" />} label="Stale Spans" value={runtime.staleTraceSpanCount} />
+              <Metric icon={<GitBranch className="size-4" />} label="Swarm Plan Settled" value={runtime.swarmPlanSettledByLaterStageCount} />
+              <Metric icon={<CheckCircle2 className="size-4" />} label="Terminal Runs" value={runtime.terminalRunCount} />
+            </div>
+            <DataCard
+              title="Runtime Lifecycle Evidence"
+              meta={["runtimeConsistency", `issues:${runtime.issues.length}`]}
+              body={{
+                openActivities: runtime.openActivities,
+                staleTraceSpans: runtime.staleTraceSpans,
+                issues: runtime.issues,
+                diagnosis: runtime.diagnosis,
+              }}
+            />
+          </div>
+        </Panel>
+
+        <Panel title="Product And Evidence Signals">
+          <div className="grid gap-3">
+            <div className="grid gap-2 md:grid-cols-2">
+              <Metric icon={<Activity className="size-4" />} label="UI Logs" value={productHealth.uiLogCount} />
+              <Metric icon={<Server className="size-4" />} label="Server Logs" value={productHealth.serverLogCount} />
+              <Metric icon={<CheckCircle2 className="size-4" />} label="Observations" value={observations.observationCount} />
+              <Metric icon={<CheckCircle2 className="size-4" />} label="Quality Issues" value={summary.qualityIssues.length} />
+            </div>
+            <DataCard
+              title="Product Health"
+              meta={["submit", "sse", "runtime_cards", "suggestions"]}
+              body={{
+                hasSubmitAccepted: productHealth.hasSubmitAccepted,
+                hasServerMessageAccepted: productHealth.hasServerMessageAccepted,
+                hasSseOpen: productHealth.hasSseOpen,
+                hasRuntimeItemRenderSignal: productHealth.hasRuntimeItemRenderSignal,
+                hasSuggestionsRenderSignal: productHealth.hasSuggestionsRenderSignal,
+                issues: productHealth.issues,
+              }}
+            />
+            <DataCard
+              title="Observation Summary"
+              meta={["observations", "evidence"]}
+              body={{
+                sourceTypes: observations.sourceTypes,
+                sourceNames: observations.sourceNames,
+                statuses: observations.statuses,
+                evidenceLevels: observations.evidenceLevels,
+                missingEnv: observations.missingEnv,
+                verificationCommands: observations.verificationCommands,
+              }}
+            />
+          </div>
+        </Panel>
+      </section>
+
+      <Panel title="Structured Remediation">
+        <div className="grid gap-3">
+          {remediation.length === 0 ? (
+            <EmptyState label="No remediation items" />
+          ) : (
+            remediation.map((item) => (
+              <DataCard
+                key={item.id}
+                title={item.title}
+                meta={[item.id, item.category, item.severity]}
+                body={{
+                  evidence: item.evidence,
+                  recommendedAction: item.recommendedAction,
+                  verificationCommands: item.verificationCommands,
+                }}
+              />
+            ))
+          )}
+        </div>
+      </Panel>
+    </section>
   );
 }
 
