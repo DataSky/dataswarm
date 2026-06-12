@@ -58,12 +58,11 @@ export async function createTextArtifact(input: {
        JOIN artifact_versions av ON av.id = a.current_version_id
        WHERE a.conversation_id = ?
          AND a.type = ?
-         AND a.title = ?
          AND av.content_hash = ?
        ORDER BY a.created_at DESC
        LIMIT 1`,
     )
-    .get(input.conversationId, input.type, input.title, contentHash) as
+    .get(input.conversationId, input.type, contentHash) as
     | {
         id: string;
         current_version_id: string;
@@ -204,12 +203,11 @@ export async function createBinaryArtifact(input: {
        JOIN artifact_versions av ON av.id = a.current_version_id
        WHERE a.conversation_id = ?
          AND a.type = ?
-         AND a.title = ?
          AND av.content_hash = ?
        ORDER BY a.created_at DESC
        LIMIT 1`,
     )
-    .get(input.conversationId, input.type, input.title, contentHash) as
+    .get(input.conversationId, input.type, contentHash) as
     | {
         id: string;
         current_version_id: string;
@@ -326,15 +324,15 @@ export async function listArtifacts(conversationId: string): Promise<ArtifactRec
     )
     .all(conversationId) as ArtifactRow[];
 
-  const latestByTypeAndTitle = new Map<string, ArtifactRow>();
+  const latestByTypeAndContent = new Map<string, ArtifactRow>();
   for (const row of rows) {
-    const key = `${row.type}:${row.title}`;
-    if (!latestByTypeAndTitle.has(key)) {
-      latestByTypeAndTitle.set(key, row);
+    const key = `${row.type}:${row.content_hash ?? row.title}`;
+    if (!latestByTypeAndContent.has(key)) {
+      latestByTypeAndContent.set(key, row);
     }
   }
 
-  return Array.from(latestByTypeAndTitle.values()).map(mapArtifact);
+  return Array.from(latestByTypeAndContent.values()).map(mapArtifact);
 }
 
 export async function getArtifact(id: string): Promise<ArtifactRecord | null> {

@@ -1,36 +1,77 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# DataSwarm Web Workspace
 
-## Getting Started
+This package contains the DataSwarm Next.js workspace: conversation UI, API routes, SSE streaming, trace pages, settings, artifact previews, and runtime adapters.
 
-First, run the development server:
+For the project-level architecture and roadmap, start with the root [README.md](../../README.md).
+
+## Development
+
+Install dependencies from the repository root:
+
+```bash
+npm --prefix apps/web install
+```
+
+Create local environment config:
+
+```bash
+cp ../../.env.example .env.local
+```
+
+For mock/local development, keep:
+
+```bash
+DATASWARM_MOCK_MODEL=1
+DATASWARM_MOCK_TOOLS=1
+DATASWARM_SANDBOX_PROVIDER=mock
+DATASWARM_DATA_DIR=../../data
+DATASWARM_WORKSPACE_ROOT=../..
+```
+
+Start the app:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```text
+http://localhost:3000
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Package Commands
 
-## Learn More
+From this directory:
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm run dev
+npm run build
+npm run start
+npm run lint
+npm run typecheck
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+From the repository root, prefer the workspace aliases:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm run dev
+npm run build
+npm run check
+npm run verify:commit
+```
 
-## Deploy on Vercel
+## Key Areas
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```text
+src/app/                  # App Router pages and API routes
+src/components/           # Conversation, trace, artifact, settings UI
+src/server/runtime/       # Orchestrator, planner, swarm, sandbox runtime
+src/server/tools/         # Tool catalog and adapters
+src/server/repositories/  # SQLite persistence repositories
+src/server/storage/       # Database bootstrap and schema handling
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Local State
+
+The web app stores local SQLite data and artifacts through `DATASWARM_DATA_DIR`, which defaults to `../../data` for repository-root execution. Runtime data, `.env.local`, `.next`, and dependencies are intentionally ignored by Git.

@@ -44,6 +44,7 @@ type BranchArtifactSummary = {
   title: string;
   mimeType: string;
   storageUri: string;
+  deduped?: boolean;
 };
 
 export function shouldUseSwarm(text: string) {
@@ -472,18 +473,20 @@ export async function executeSwarm(input: {
       content: result.outputMarkdown,
       sourceTraceId: input.parentTraceId,
     });
-    artifactIds.push(artifact.id);
+    pushUnique(artifactIds, artifact.id);
 
-    await publishArtifactEvents({
-      runId: input.runId,
-      conversationId: input.conversationId,
-      taskId: input.taskId,
-      traceId: input.parentTraceId,
-      spanId: branchSpan.id,
-      parentSpanId: swarmSpan.id,
-      artifact,
-      previewType: "html",
-    });
+    if (!artifact.deduped) {
+      await publishArtifactEvents({
+        runId: input.runId,
+        conversationId: input.conversationId,
+        taskId: input.taskId,
+        traceId: input.parentTraceId,
+        spanId: branchSpan.id,
+        parentSpanId: swarmSpan.id,
+        artifact,
+        previewType: "html",
+      });
+    }
 
     const branchArtifacts: BranchArtifactSummary[] = [
       {
@@ -492,6 +495,7 @@ export async function executeSwarm(input: {
         title: artifact.title,
         mimeType: artifact.mimeType,
         storageUri: artifact.storageUri,
+        deduped: artifact.deduped,
       },
     ];
     const recoveredArtifacts = await recoverSandboxArtifacts({
@@ -506,7 +510,7 @@ export async function executeSwarm(input: {
       sandboxArtifacts: result.sandboxArtifacts,
     });
     for (const recoveredArtifact of recoveredArtifacts) {
-      artifactIds.push(recoveredArtifact.id);
+      pushUnique(artifactIds, recoveredArtifact.id);
       branchArtifacts.push(recoveredArtifact);
     }
     const imageArtifactIds = branchArtifacts.filter((item) => item.type === "image").map((item) => item.id);
@@ -946,6 +950,7 @@ async function publishArtifactEvents(input: {
     title: string;
     storageUri: string;
     previewUri: string;
+    deduped?: boolean;
   };
   previewType: "html" | "image";
 }) {
@@ -968,6 +973,7 @@ async function publishArtifactEvents(input: {
       title: input.artifact.title,
       storage_uri: input.artifact.storageUri,
       source_trace_id: input.traceId,
+      deduped: input.artifact.deduped ?? false,
     },
   });
   await publishRunEvent({
@@ -1001,7 +1007,7 @@ async function recoverSandboxArtifacts(input: {
   branchId: string;
   sandboxArtifacts?: Array<Record<string, unknown>>;
 }) {
-  const recovered: Array<{ id: string; type: string; title: string; mimeType: string; storageUri: string }> = [];
+  const recovered: BranchArtifactSummary[] = [];
   for (const sandboxArtifact of input.sandboxArtifacts ?? []) {
     const kind = String(sandboxArtifact.kind ?? "");
     const contentBase64 = typeof sandboxArtifact.contentBase64 === "string" ? sandboxArtifact.contentBase64 : "";
@@ -1034,19 +1040,28 @@ async function recoverSandboxArtifacts(input: {
       title: artifact.title,
       mimeType: artifact.mimeType,
       storageUri: artifact.storageUri,
+      deduped: artifact.deduped,
     });
-    await publishArtifactEvents({
-      runId: input.runId,
-      conversationId: input.conversationId,
-      taskId: input.taskId,
-      traceId: input.traceId,
-      spanId: input.spanId,
-      parentSpanId: input.parentSpanId,
-      artifact,
-      previewType: "image",
-    });
+    if (!artifact.deduped) {
+      await publishArtifactEvents({
+        runId: input.runId,
+        conversationId: input.conversationId,
+        taskId: input.taskId,
+        traceId: input.traceId,
+        spanId: input.spanId,
+        parentSpanId: input.parentSpanId,
+        artifact,
+        previewType: "image",
+      });
+    }
   }
   return recovered;
+}
+
+function pushUnique(target: string[], value: string) {
+  if (!target.includes(value)) {
+    target.push(value);
+  }
 }
 
 function formatBranchArtifacts(
@@ -1066,6 +1081,7 @@ function publicBranchArtifact(artifact: BranchArtifactSummary) {
     type: artifact.type,
     title: artifact.title,
     mimeType: artifact.mimeType,
+    deduped: artifact.deduped,
   };
 }
 

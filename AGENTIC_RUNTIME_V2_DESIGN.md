@@ -14,7 +14,7 @@ As of 2026-06-11, the core V2 loop is implemented:
 - Executed actions create persisted `Observation` records.
 - Tool-backed final answers are expected to cite Observation IDs.
 - Implemented adapters include model-facing `web.search`, provider/direct `tavily.search`, `trace.query`, `artifact.create`, `file.read`, and `approval.request`.
-- `artifact.create` is now the artifact path for Markdown/HTML deliverables and uses content-hash de-dupe.
+- `artifact.create` is now the artifact path for Markdown/HTML deliverables, and artifact persistence uses content-hash de-dupe for text and sandbox-recovered image artifacts.
 - Skills V2 manifests, enable/disable, and local install/update management are implemented for local skill packs.
 - Planner-selected skills persist `sourceType=skill` Observations with selection reason, manifest context, alternatives, and replan linkage.
 - Planner-owned mock Swarm accepts planner-provided branch definitions on `spawn_agent` / `spawn_swarm`, records `plan_source` (`model_branches`, `model_single_agent`, `model_roles`, or `runtime_fallback`), persists one parent-level `sourceType=agent` branch Observation per branch, and links branch/merge events to those Observation IDs.

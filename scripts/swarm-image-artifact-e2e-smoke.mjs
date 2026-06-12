@@ -76,8 +76,8 @@ try {
       )
       .all(conversationId, runId);
     expect(
-      "sandbox plot created image artifacts",
-      imageArtifacts.length >= 1 &&
+      "sandbox plot created one canonical image artifact",
+      imageArtifacts.length === 1 &&
         imageArtifacts.every(
           (artifact) =>
             artifact.status === "preview_ready" &&
@@ -92,6 +92,12 @@ try {
     );
 
     const imageArtifactIds = imageArtifacts.map((artifact) => artifact.id);
+    const imageContentHashes = new Set(imageArtifacts.map((artifact) => artifact.content_hash));
+    expect(
+      "sandbox plot image artifacts are content-hash deduped",
+      imageArtifacts.length === imageContentHashes.size,
+      JSON.stringify(imageArtifacts.map((artifact) => ({ id: artifact.id, content_hash: artifact.content_hash, title: artifact.title }))),
+    );
     const artifactCreatedEvents = db
       .prepare(
         `SELECT payload_json
@@ -158,10 +164,34 @@ try {
       .map((row) => parseJson(row.metadata_json, {}));
     expect(
       "branch observations record image artifact ids",
-      branchObservations.some(
+      branchObservations.length >= 1 &&
+        branchObservations.every(
+          (metadata) =>
+            Array.isArray(metadata.image_artifact_ids) &&
+            metadata.image_artifact_ids.some((id) => imageArtifactIds.includes(id)),
+        ) &&
+        branchObservations.some(
+          (metadata) =>
+            Array.isArray(metadata.image_artifact_ids) &&
+            metadata.image_artifact_ids.some((id) => imageArtifactIds.includes(id)),
+        ),
+      JSON.stringify(
+        branchObservations.map((metadata) => ({
+          branch_id: metadata.branch_id,
+          artifact_ids: metadata.artifact_ids,
+          image_artifact_ids: metadata.image_artifact_ids,
+          image_artifact_count: metadata.quality_signals?.imageArtifactCount,
+          branch_artifacts: metadata.branch_artifacts,
+        })),
+      ),
+    );
+    expect(
+      "all branches reference the canonical image artifact",
+      branchObservations.every(
         (metadata) =>
           Array.isArray(metadata.image_artifact_ids) &&
-          metadata.image_artifact_ids.some((id) => imageArtifactIds.includes(id)),
+          metadata.image_artifact_ids.length === 1 &&
+          metadata.image_artifact_ids[0] === imageArtifactIds[0],
       ),
       JSON.stringify(
         branchObservations.map((metadata) => ({
