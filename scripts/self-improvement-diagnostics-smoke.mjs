@@ -316,11 +316,11 @@ function writeSyntheticCanonicalReceipts() {
     startedAt: "2026-06-11T00:00:00.000Z",
     completedAt: "2026-06-11T00:00:01.000Z",
     filters: { phases: [], only: [], requireLiveE2b: false, stopOnFailure: false },
-    summary: { total: 42, passed: 0, failed: 0, gatedSkip: 0, notRun: 42 },
+    summary: { total: 43, passed: 0, failed: 0, gatedSkip: 0, notRun: 43 },
     phaseSummary: {
       phase1: { total: 7, passed: 0, failed: 0, gatedSkip: 0, notRun: 7 },
       phase2: { total: 3, passed: 0, failed: 0, gatedSkip: 0, notRun: 3 },
-      phase3: { total: 12, passed: 0, failed: 0, gatedSkip: 0, notRun: 12 },
+      phase3: { total: 13, passed: 0, failed: 0, gatedSkip: 0, notRun: 13 },
       phase4: { total: 10, passed: 0, failed: 0, gatedSkip: 0, notRun: 10 },
       phase5: { total: 10, passed: 0, failed: 0, gatedSkip: 0, notRun: 10 },
     },

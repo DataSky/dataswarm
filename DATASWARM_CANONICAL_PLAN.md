@@ -163,6 +163,7 @@ node scripts/swarm-reducer-smoke.mjs
 node scripts/swarm-verifier-smoke.mjs
 node scripts/swarm-review-smoke.mjs
 node scripts/sandbox-retry-e2e-smoke.mjs
+node scripts/swarm-image-artifact-e2e-smoke.mjs
 node scripts/swarm-trace-ui-smoke.mjs
 node scripts/approval-lifecycle-smoke.mjs
 node scripts/self-improvement-async-smoke.mjs
@@ -199,6 +200,7 @@ Additional product smoke scenarios:
 7. Missing credentials, missing built templates, or deferred sandbox execution are explicit in trace metadata.
 8. Artifact drawer shows de-duped Markdown/HTML artifacts.
 9. Sandbox branch execution emits heartbeat, internal action/observation, artifact recovery manifest events, one durable parent-level branch Observation per branch, `swarm.reduce` reduced branch evidence, merge summaries, `swarm.verify` checks, and explicit `swarm.review` skipped/mock/model state; failed/cancelled branches appear in reduction, merge, verification, and review results.
+9a. Sandbox visualization requests recover image artifacts into the local Artifact store, publish image-mode preview events, attach image artifact preview parts to the assistant message, return image bytes from preview APIs, and pass the requested-image swarm verifier check.
 10. Sandbox retry policy is bounded, retryable-error scoped, and records attempt metadata.
 11. Planner-owned mock Swarm creates exactly one branch cycle for a single swarm instruction, then finalizes from the swarm Observation.
 12. Run cancellation marks active runs and non-terminal sandbox sessions as cancelling, stops future swarm branches, and records terminal `run.cancelled` instead of `run.failed`.

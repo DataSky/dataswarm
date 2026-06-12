@@ -29,6 +29,7 @@ const gates = [
   phaseGate("phase3", "swarm-verifier", "node scripts/swarm-verifier-smoke.mjs"),
   phaseGate("phase3", "swarm-review", "node scripts/swarm-review-smoke.mjs"),
   phaseGate("phase3", "sandbox-retry-e2e", "node scripts/sandbox-retry-e2e-smoke.mjs"),
+  phaseGate("phase3", "swarm-image-artifact-e2e", "node scripts/swarm-image-artifact-e2e-smoke.mjs"),
   phaseGate("phase3", "swarm-trace-ui", "node scripts/swarm-trace-ui-smoke.mjs"),
   phaseGate("phase3", "approval-lifecycle", "node scripts/approval-lifecycle-smoke.mjs"),
 

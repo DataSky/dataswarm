@@ -5,7 +5,7 @@ const root = process.cwd();
 const args = parseArgs(process.argv.slice(2));
 const dataDir = path.resolve(root, process.env.DATASWARM_DATA_DIR ?? "data");
 const verificationDir = path.join(dataDir, "verification");
-const expectedTotalGates = 42;
+const expectedTotalGates = 43;
 const receiptFiles = {
   canonical: path.join(verificationDir, "canonical-verification-latest.json"),
   phase4E2b: path.join(verificationDir, "canonical-phase4-e2b-latest.json"),

@@ -89,11 +89,11 @@ try {
   expect(
     "diagnostic exposes canonical verification receipt summary",
     diagnostic?.summary?.canonicalVerification?.receiptCount === 3 &&
-      diagnostic.summary.canonicalVerification.totalGates === 48 &&
+      diagnostic.summary.canonicalVerification.totalGates === 49 &&
       diagnostic.summary.canonicalVerification.passed === 2 &&
       diagnostic.summary.canonicalVerification.failed === 0 &&
       diagnostic.summary.canonicalVerification.gatedSkip === 4 &&
-      diagnostic.summary.canonicalVerification.notRun === 42 &&
+      diagnostic.summary.canonicalVerification.notRun === 43 &&
       diagnostic.summary.canonicalVerification.liveE2bRequired === true &&
       diagnostic.summary.canonicalVerification.liveE2bGated === true,
     JSON.stringify(diagnostic?.summary?.canonicalVerification ?? null),
@@ -163,11 +163,11 @@ function writeSyntheticReceipts() {
     startedAt: "2026-06-11T00:00:00.000Z",
     completedAt: "2026-06-11T00:00:01.000Z",
     filters: { phases: [], only: [], requireLiveE2b: false, stopOnFailure: false },
-    summary: { total: 42, passed: 0, failed: 0, gatedSkip: 0, notRun: 42 },
+    summary: { total: 43, passed: 0, failed: 0, gatedSkip: 0, notRun: 43 },
     phaseSummary: {
       phase1: { total: 7, passed: 0, failed: 0, gatedSkip: 0, notRun: 7 },
       phase2: { total: 3, passed: 0, failed: 0, gatedSkip: 0, notRun: 3 },
-      phase3: { total: 12, passed: 0, failed: 0, gatedSkip: 0, notRun: 12 },
+      phase3: { total: 13, passed: 0, failed: 0, gatedSkip: 0, notRun: 13 },
       phase4: { total: 10, passed: 0, failed: 0, gatedSkip: 0, notRun: 10 },
       phase5: { total: 10, passed: 0, failed: 0, gatedSkip: 0, notRun: 10 },
     },

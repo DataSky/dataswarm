@@ -51,7 +51,11 @@ class MockModelProvider implements ModelProvider {
       const latestTask = extractLatestPlannerUserMessage(content);
       const hasSwarmObservation = /\[agent:swarm\.(?:mock|e2b)\]\s+status=completed/i.test(content);
       const hasSkillObservation = /\[skill:[^\]]+\]\s+status=completed/i.test(content);
-      const shouldSwarm = /\bswarm\b|蜂群|并行|多分支|多个沙箱|沙箱.*分支|多agent|multi-agent|multi agents/i.test(latestTask);
+      const shouldSandboxVisual =
+        /沙箱|sandbox/i.test(latestTask) && /绘制|画图|图片|图像|生成图|plot|chart|matplotlib|png|svg|image/i.test(latestTask);
+      const shouldSwarm =
+        /\bswarm\b|蜂群|并行|多分支|多个沙箱|沙箱.*分支|多agent|multi-agent|multi agents/i.test(latestTask) ||
+        shouldSandboxVisual;
       const shouldUseSkill =
         !hasSkillObservation &&
         /skill smoke|use_skill smoke|trace-diagnostics skill|使用.*skill|启用.*skill|选择.*skill/i.test(latestTask);

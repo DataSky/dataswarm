@@ -132,6 +132,7 @@ Useful focused smoke tests:
 npm run smoke:agentic-v2
 npm run smoke:sandbox
 npm run smoke:swarm
+npm run smoke:swarm-image
 npm run smoke:trace-diagnostics
 ```
 

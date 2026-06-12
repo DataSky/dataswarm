@@ -19,6 +19,7 @@
     "smoke:agentic-v2": "node scripts/agentic-loop-v2-smoke.mjs",
     "smoke:sandbox": "node scripts/sandbox-agent-smoke.mjs",
     "smoke:swarm-verifier": "node scripts/swarm-verifier-smoke.mjs",
+    "smoke:swarm-image": "node scripts/swarm-image-artifact-e2e-smoke.mjs",
     "smoke:tool-contract": "node scripts/tool-event-contract-e2e-smoke.mjs",
     "smoke:skills": "node scripts/skills-v2-smoke.mjs",
     "smoke:skills-e2e": "node scripts/skills-observation-e2e-smoke.mjs",
