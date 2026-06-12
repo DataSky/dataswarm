@@ -1,6 +1,6 @@
 # DataSwarm Implementation Status
 
-> Last updated: 2026-06-11  
+> Last updated: 2026-06-12  
 > Active goal: stabilize Agentic Runtime V2 and complete the gated path from planner-owned mock Swarm to real E2B sandbox execution.
 
 ## Current Canonical Status
@@ -16,6 +16,7 @@ Current runtime truth:
 | `web.search` | Real/mock-gated | model-facing generic `web_search` adapter with provider registry; Tavily is the default real provider, `mock.search` is the built-in deterministic validation provider, and observations record logical/provider metadata |
 | `tavily.search` | Real/mock-gated | provider/direct adapter retained for compatibility and diagnostics; mock only when `DATASWARM_MOCK_TOOLS=1` or key missing |
 | `trace.query` | Real | implemented diagnostics adapter |
+| Conversation diagnostics runtime consistency | Real | diagnostics summary now checks event-derived runtime activity state against terminal run state and trace span status, including a settlement rule for `swarm.plan` when later swarm stages exist |
 | `artifact.create` | Real | implemented adapter for Markdown/HTML artifact creation and content-hash de-dupe |
 | `file.read` | Real | implemented workspace-local file read adapter |
 | `approval.request` | Real | creates pending approval records; Run Trace/API support approve/reject decisions |
@@ -66,6 +67,7 @@ node scripts/self-improvement-summary-smoke.mjs
 node scripts/self-improvement-summary-api-smoke.mjs
 node scripts/trace-diagnostics-improvements-smoke.mjs
 node scripts/trace-diagnostics-sandbox-smoke.mjs
+node scripts/trace-diagnostics-runtime-consistency-smoke.mjs
 node scripts/canonical-verification-diagnostics-smoke.mjs
 node scripts/canonical-goal-audit-smoke.mjs
 node scripts/canonical-goal-audit.mjs
@@ -85,6 +87,7 @@ Latest V2 tool-catalog calibration:
 - `node scripts/web-search-provider-smoke.mjs` verified the static provider registry contract with 10/10 checks.
 - `node scripts/web-search-provider-e2e-smoke.mjs` verified the production API path with `DATASWARM_WEB_SEARCH_PROVIDER=mock`: model action -> `web.search` -> `mock.search` provider payload -> completed Observation -> terminal tool events with logical/provider metadata.
 - `trace.query` now returns a richer model-facing summary that includes sandbox preflight counts and self-improvement applied receipt coverage, so diagnostic tool Observations can be used directly by the planner instead of requiring raw JSON inspection.
+- Conversation diagnostics now include `summary.runtimeConsistency`, which reconstructs model/tool/artifact/swarm runtime activities from `run_events`, flags terminal runs with stale running activities or trace spans, and treats `swarm.plan` as settled when later `swarm.reduce` / `swarm.merge` / `swarm.verify` / `swarm.review` events exist.
 - `scripts/canonical-verification-runner.mjs` is the grouped phase runner for Phase 1-5 gates. It writes a secret-safe receipt to `data/verification/canonical-verification-latest.json`, records E2B readiness booleans without secret values, and reports live E2B gates as `gated_skip` unless real credentials/template receipt make the external sandbox path provable. Canonical verification receipts now flow into conversation diagnostics / `trace.query`, so self-improvement and operator diagnosis can see Phase 1-5 gate status instead of reading local JSON files manually.
 - `scripts/canonical-goal-audit.mjs` is the combined goal completion audit. Default mode verifies local receipt/document consistency while allowing explicit live E2B gating; `--require-live-e2b` now passes only because `data/verification/canonical-phase4-live-required-latest.json` records both a passed real external E2B sandbox smoke and a passed Orchestrator -> planner-owned `spawn_swarm` -> real E2B branch E2E gate.
 - `node scripts/agentic-loop-v2-smoke.mjs` now includes 81 checks, including generic `web.search` provider registry, DB provider schema seed, provider-wrapper invariants, event protocol E2E coverage, phase-grouped canonical verification runner coverage, canonical receipt diagnostics coverage, canonical goal completion audit coverage, trace.query diagnostic summary coverage, planner-provided Swarm branch definitions, independent Swarm reducer/verifier/reviewer coverage, the controlled E2B template receipt gate, the Run Trace system readiness view, and the self-improvement queue health summary/API contract.
@@ -143,6 +146,7 @@ Self-improvement summary smoke passed: 10/10 checks passed, including repository
 Self-improvement summary API smoke passed: 10/10 checks passed, including synthetic queued/shadow/prepared/approved/applied/rejected/deferred candidates, API summary counters, queue health, lifecycle distribution, required command coverage, next operator actions, and post-smoke cleanup.
 Trace diagnostics improvements smoke passed: 13/13 checks passed, including conversation diagnostics API visibility for queued/applied self-improvement candidates, required verification commands, applied command-level verification receipt coverage, and structured self-improvement remediation items.
 Trace diagnostics sandbox smoke passed: 13/13 checks passed, including conversation diagnostics API visibility for E2B sandbox sessions, failed branch Observations, observation summary counts, `sandbox_preflight_failed`, missing env names, sandbox verification commands, E2B live smoke receipt coverage, and structured sandbox remediation items.
+Trace diagnostics runtime consistency smoke passed, including diagnostics API visibility for stale runtime activity after terminal run, stale running trace span detection, `swarm.plan` settlement by later swarm stage, diagnosis text, and `runtime-event-consistency` remediation.
 ```
 
 Build result:

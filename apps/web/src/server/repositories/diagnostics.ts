@@ -311,6 +311,7 @@ function buildSummary(input: {
   const observations = buildObservationSummary(input.observations);
   const sandbox = buildSandboxSummary(input.sandboxSessions, input.events);
   const selfImprovement = buildSelfImprovementSummary(input.selfImprovementCandidates);
+  const runtimeConsistency = buildRuntimeConsistencySummary(input.runs, input.events, input.traceSpans);
   const canonicalVerification = input.canonicalVerification;
   const remediation = buildRemediationPlan({
     productHealth,
@@ -318,6 +319,7 @@ function buildSummary(input: {
     observations,
     sandbox,
     selfImprovement,
+    runtimeConsistency,
     canonicalVerification,
   });
 
@@ -341,6 +343,7 @@ function buildSummary(input: {
     observations,
     sandbox,
     selfImprovement,
+    runtimeConsistency,
     canonicalVerification,
     remediation,
     failures,
@@ -354,6 +357,7 @@ function buildSummary(input: {
       ...observations.diagnosis,
       ...sandbox.diagnosis,
       ...selfImprovement.diagnosis,
+      ...runtimeConsistency.diagnosis,
       ...canonicalVerification.diagnosis,
       remediation.length === 0
         ? "No structured remediation items generated."
@@ -369,6 +373,7 @@ function buildRemediationPlan(input: {
   observations: ReturnType<typeof buildObservationSummary>;
   sandbox: ReturnType<typeof buildSandboxSummary>;
   selfImprovement: ReturnType<typeof buildSelfImprovementSummary>;
+  runtimeConsistency: ReturnType<typeof buildRuntimeConsistencySummary>;
   canonicalVerification: CanonicalVerificationReceiptSummary;
 }) {
   const items: RemediationItem[] = [];
@@ -396,6 +401,22 @@ function buildRemediationPlan(input: {
       recommendedAction:
         "Verify submit, SSE, runtime card, suggestion, and server handoff logs for the affected conversation before attributing the issue to model behavior.",
       verificationCommands: ["npm --prefix apps/web run typecheck", "npm --prefix apps/web run lint"],
+    });
+  }
+
+  if (input.runtimeConsistency.issues.length > 0) {
+    items.push({
+      id: "runtime-event-consistency",
+      category: "runtime_truth",
+      severity: input.runtimeConsistency.staleRunningActivityCount > 0 ? "high" : "medium",
+      title: "Repair runtime event lifecycle inconsistencies before trusting UI state",
+      evidence: input.runtimeConsistency.issues.slice(0, 5),
+      recommendedAction:
+        "Ensure every started model/tool/artifact/swarm activity has a terminal event or a documented settlement rule, and keep trace span status aligned with terminal run state.",
+      verificationCommands: [
+        "npm run smoke:trace-diagnostics",
+        "node scripts/trace-diagnostics-runtime-consistency-smoke.mjs",
+      ],
     });
   }
 
@@ -885,6 +906,194 @@ function buildQualityIssues(toolCalls: Row[], evals: Row[], events: Row[], messa
   }
 
   return Array.from(new Set(issues));
+}
+
+function buildRuntimeConsistencySummary(runs: Row[], events: Row[], traceSpans: Row[]) {
+  const terminalRunStatuses = new Set(["completed", "failed", "cancelled"]);
+  const terminalRunIds = new Set(
+    runs.filter((run) => terminalRunStatuses.has(String(run.status))).map((run) => String(run.id)),
+  );
+  const activities = new Map<
+    string,
+    {
+      id: string;
+      runId: string;
+      kind: string;
+      title: string;
+      status: "running" | "completed" | "failed";
+      startedSeq: number;
+      lastSeq: number;
+      settledBy?: string;
+    }
+  >();
+  const swarmTerminalEventByRun = new Map<string, string>();
+
+  for (const event of events) {
+    const eventType = String(event.event_type);
+    if (["swarm.reduce", "swarm.merge", "swarm.verify", "swarm.review", "swarm.cancelled"].includes(eventType)) {
+      swarmTerminalEventByRun.set(String(event.run_id), eventType);
+    }
+  }
+
+  for (const event of events) {
+    const parsed = parseJson(event.payload_json);
+    const envelope = isRecord(parsed) && isRecord(parsed.payload) ? parsed : {};
+    const payload = isRecord(envelope.payload) ? envelope.payload : isRecord(parsed) ? parsed : {};
+    const trace = isRecord(envelope.trace) ? envelope.trace : {};
+    const activity = runtimeActivityFromEvent(event, payload, trace, swarmTerminalEventByRun.get(String(event.run_id)));
+    if (!activity) {
+      continue;
+    }
+    const current = activities.get(activity.id);
+    if (!current) {
+      activities.set(activity.id, activity);
+      continue;
+    }
+    activities.set(activity.id, {
+      ...current,
+      ...activity,
+      startedSeq: Math.min(current.startedSeq, activity.startedSeq),
+      lastSeq: Math.max(current.lastSeq, activity.lastSeq),
+      settledBy: activity.settledBy ?? current.settledBy,
+    });
+  }
+
+  const openActivities = [...activities.values()].filter((activity) => activity.status === "running");
+  const staleRunningActivities = openActivities.filter((activity) => terminalRunIds.has(activity.runId));
+  const staleTraceSpans = traceSpans.filter(
+    (span) => terminalRunIds.has(String(span.run_id)) && ["running", "queued"].includes(String(span.status)),
+  );
+  const swarmPlanSettledByLaterStageCount = [...activities.values()].filter(
+    (activity) => activity.kind === "swarm.plan" && activity.status === "completed" && activity.settledBy,
+  ).length;
+  const issues = [
+    ...staleRunningActivities.map(
+      (activity) =>
+        `run ${activity.runId} is terminal but runtime activity ${activity.title} (${activity.id}) is still ${activity.status}.`,
+    ),
+    ...staleTraceSpans.map(
+      (span) =>
+        `run ${String(span.run_id)} is terminal but trace span ${String(span.id)} (${String(span.name ?? span.span_kind)}) is still ${String(span.status)}.`,
+    ),
+  ];
+  const diagnosis: string[] = [];
+  if (activities.size === 0 && traceSpans.length === 0) {
+    diagnosis.push("No runtime activities or trace spans recorded for lifecycle consistency checks.");
+  } else {
+    diagnosis.push(
+      `Runtime lifecycle consistency: ${activities.size} activity item(s), ${openActivities.length} open/running, ${staleRunningActivities.length} stale after terminal run; ${traceSpans.length} trace span(s), ${staleTraceSpans.length} stale trace span(s).`,
+    );
+  }
+  if (swarmPlanSettledByLaterStageCount > 0) {
+    diagnosis.push(`${swarmPlanSettledByLaterStageCount} swarm.plan activity item(s) settled by later swarm terminal stages.`);
+  }
+  if (issues.length > 0) {
+    diagnosis.push(`Runtime lifecycle inconsistencies detected: ${issues.slice(0, 3).join(" | ")}`);
+  }
+
+  return {
+    activityCount: activities.size,
+    openActivityCount: openActivities.length,
+    staleRunningActivityCount: staleRunningActivities.length,
+    traceSpanCount: traceSpans.length,
+    staleTraceSpanCount: staleTraceSpans.length,
+    terminalRunCount: terminalRunIds.size,
+    swarmPlanSettledByLaterStageCount,
+    openActivities: openActivities.map((activity) => ({
+      id: activity.id,
+      runId: activity.runId,
+      kind: activity.kind,
+      title: activity.title,
+      status: activity.status,
+      settledBy: activity.settledBy,
+    })),
+    staleTraceSpans: staleTraceSpans.map((span) => ({
+      id: String(span.id),
+      runId: String(span.run_id),
+      name: String(span.name ?? span.span_kind ?? "trace span"),
+      status: String(span.status),
+    })),
+    issues,
+    diagnosis,
+  };
+}
+
+function runtimeActivityFromEvent(
+  event: Row,
+  payload: Record<string, unknown>,
+  trace: Record<string, unknown>,
+  swarmTerminalEventType: string | undefined,
+) {
+  const type = String(event.event_type);
+  const runId = String(event.run_id);
+  const seq = Number(event.seq ?? 0);
+  if (type.startsWith("tool.call.")) {
+    const id = `tool:${String(payload.tool_call_id ?? trace.span_id ?? event.producer_id ?? "tool")}`;
+    return {
+      id,
+      runId,
+      kind: "tool",
+      title: `Tool call: ${String(payload.tool_name ?? "tool")}`,
+      status: terminalStatusFromEvent(type),
+      startedSeq: seq,
+      lastSeq: seq,
+    };
+  }
+  if (type.startsWith("model.call.")) {
+    const id = `model:${String(payload.model_call_id ?? trace.span_id ?? event.producer_id ?? "model")}`;
+    return {
+      id,
+      runId,
+      kind: "model",
+      title: `Model call: ${String(payload.model ?? payload.model_profile ?? "model")}`,
+      status: terminalStatusFromEvent(type),
+      startedSeq: seq,
+      lastSeq: seq,
+    };
+  }
+  if (type.startsWith("artifact.")) {
+    const id = `artifact:${String(trace.span_id ?? payload.artifact_id ?? payload.artifact_version_id ?? event.producer_id ?? "artifact")}`;
+    return {
+      id,
+      runId,
+      kind: "artifact",
+      title: `Artifact: ${String(payload.title ?? payload.type ?? "artifact")}`,
+      status: terminalStatusFromEvent(type),
+      startedSeq: seq,
+      lastSeq: seq,
+    };
+  }
+  if (["swarm.plan", "swarm.reduce", "swarm.merge", "swarm.verify", "swarm.review", "swarm.cancelled"].includes(type)) {
+    const isPlanSettled = type === "swarm.plan" && Boolean(swarmTerminalEventType);
+    const payloadStatus = String(payload.status ?? "");
+    const hasTerminalPayloadStatus = ["completed", "failed", "cancelled"].includes(payloadStatus);
+    return {
+      id: `swarm:${type}:${String(trace.span_id ?? event.seq ?? type)}`,
+      runId,
+      kind: type,
+      title: type,
+      status:
+        isPlanSettled || type !== "swarm.plan" || hasTerminalPayloadStatus
+          ? payloadStatus === "failed" || payloadStatus === "cancelled"
+            ? "failed"
+            : "completed"
+          : terminalStatusFromEvent(type),
+      startedSeq: seq,
+      lastSeq: seq,
+      settledBy: isPlanSettled ? swarmTerminalEventType : undefined,
+    };
+  }
+  return null;
+}
+
+function terminalStatusFromEvent(type: string): "running" | "completed" | "failed" {
+  if (/failed|error|cancelled/.test(type)) {
+    return "failed";
+  }
+  if (/completed|output|ready|created|selected/.test(type)) {
+    return "completed";
+  }
+  return "running";
 }
 
 function isWebSearchToolName(name: string) {
