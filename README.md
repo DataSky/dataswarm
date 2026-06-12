@@ -114,26 +114,32 @@ TAVILY_API_KEY=
 Run the standard static checks:
 
 ```bash
-npm run typecheck
-npm run lint
+npm run check
 npm run build
 ```
 
-Useful runtime smoke tests:
+Recommended checkpoint checks:
 
 ```bash
-node scripts/agentic-loop-v2-smoke.mjs
-node scripts/swarm-verifier-smoke.mjs
-node scripts/sandbox-agent-smoke.mjs
-node scripts/run-trace-system-readiness-smoke.mjs
-node scripts/canonical-goal-audit.mjs
+npm run verify:commit
+npm run verify:dry
+npm run verify:audit
+```
+
+Useful focused smoke tests:
+
+```bash
+npm run smoke:agentic-v2
+npm run smoke:sandbox
+npm run smoke:swarm
+npm run smoke:trace-diagnostics
 ```
 
 E2B-related tests are gated and require explicit local credentials/configuration:
 
 ```bash
-node scripts/e2b-sandbox-smoke.mjs
-node scripts/e2b-orchestrator-e2e-smoke.mjs
+npm run verify:e2b
+npm run verify:e2b:strict
 ```
 
 ## Design Principles
@@ -150,12 +156,13 @@ node scripts/e2b-orchestrator-e2e-smoke.mjs
 
 Read these in order when reviewing the project:
 
-1. [DATASWARM_CANONICAL_PLAN.md](DATASWARM_CANONICAL_PLAN.md)
-2. [AGENTIC_RUNTIME_V2_DESIGN.md](AGENTIC_RUNTIME_V2_DESIGN.md)
-3. [ARCHITECTURE.md](ARCHITECTURE.md)
-4. [EVENT_PROTOCOL.md](EVENT_PROTOCOL.md)
-5. [SCHEMA.md](SCHEMA.md)
-6. [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)
+1. [STAGE_REVIEW_2026_06_12.md](STAGE_REVIEW_2026_06_12.md)
+2. [DATASWARM_CANONICAL_PLAN.md](DATASWARM_CANONICAL_PLAN.md)
+3. [AGENTIC_RUNTIME_V2_DESIGN.md](AGENTIC_RUNTIME_V2_DESIGN.md)
+4. [ARCHITECTURE.md](ARCHITECTURE.md)
+5. [EVENT_PROTOCOL.md](EVENT_PROTOCOL.md)
+6. [SCHEMA.md](SCHEMA.md)
+7. [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)
 
 The earlier Chinese research/design documents are retained as original vision and research baseline:
 
