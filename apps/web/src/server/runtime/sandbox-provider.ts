@@ -8,6 +8,16 @@ import {
 } from "../repositories/sandbox-sessions";
 import { nowIso } from "../storage/ids";
 import { dataDir } from "../storage/paths";
+import {
+  buildSandboxToolCatalog,
+  buildSandboxToolProxyConfig,
+  getSandboxToolProxyReadiness,
+  sandboxAgentBudgets,
+  sandboxAgentProtocol,
+  sandboxAllowedTools,
+  type SandboxToolProxyConfig,
+} from "./sandbox-tool-proxy";
+import { buildCapabilityManifest } from "./capabilities";
 
 export const DATASWARM_E2B_TEMPLATE_ALIAS = "dataswarm-agent-runtime";
 export const DATASWARM_E2B_TEMPLATE_BUILD_COMMAND =
@@ -15,6 +25,8 @@ export const DATASWARM_E2B_TEMPLATE_BUILD_COMMAND =
 
 export type SandboxBranchJob = {
   runId: string;
+  conversationId?: string;
+  taskId?: string;
   branchId: string;
   sandboxSessionId: string;
   agentSessionId: string;
@@ -23,6 +35,20 @@ export type SandboxBranchJob = {
   objective: string;
   instruction: string;
   contextBundleUri: string;
+  contextBundleContent?: string;
+  traceId?: string;
+  traceSpanId?: string;
+  agentProtocol?: "dataswarm.sandbox-agent.v1" | "dataswarm.sandbox-agent.v2" | "dataswarm.sandbox-agent.v3";
+  budgets?: {
+    maxSteps: number;
+    maxToolCalls: number;
+    maxRuntimeMs: number;
+    maxOutputTokens: number;
+  };
+  toolCatalog?: Array<Record<string, unknown>>;
+  skillManifests?: Array<Record<string, unknown>>;
+  parentToolProxy?: SandboxToolProxyConfig;
+  artifactPolicy?: Record<string, unknown>;
 };
 
 export type SandboxBranchResult = {
@@ -79,7 +105,7 @@ export type E2bSandboxReadiness = {
   liveSmokeElapsedMs?: number;
   timeoutMs: number;
   retryMaxAttempts: number;
-  sandboxAgentProtocol: "dataswarm.sandbox-agent.v1";
+  sandboxAgentProtocol: "dataswarm.sandbox-agent.v1" | "dataswarm.sandbox-agent.v2" | "dataswarm.sandbox-agent.v3";
   modelMode: "deterministic" | "real";
   modelSecretsForwarding: "disabled" | "enabled";
   templateBuildCommand: string;
@@ -91,11 +117,24 @@ export type E2bSandboxReadiness = {
   readinessReasons: string[];
   readyForLiveSmoke: boolean;
   readyForOrchestrator: boolean;
-  status: "ready" | "needs_provider_selection" | "needs_credentials" | "needs_template_verification";
+  status: "ready" | "needs_provider_selection" | "needs_credentials" | "needs_template_verification" | "needs_public_callback";
 };
 
+export function sandboxProviderSelection(): "e2b" | "mock" {
+  const raw = (process.env.DATASWARM_SANDBOX_PROVIDER ?? "e2b").trim().toLowerCase();
+  return raw === "mock" ? "mock" : "e2b";
+}
+
+function sandboxAgentModelMode(): "real" | "deterministic" {
+  const raw = (process.env.DATASWARM_SANDBOX_AGENT_MODEL ?? "real").trim().toLowerCase();
+  if (raw === "deterministic" || raw === "mock" || raw === "mock_actions") {
+    return "deterministic";
+  }
+  return "real";
+}
+
 export function createSandboxProvider(): SandboxProvider {
-  if (process.env.DATASWARM_SANDBOX_PROVIDER === "e2b") {
+  if (sandboxProviderSelection() === "e2b") {
     return new E2bSandboxProvider();
   }
   return new MockSandboxProvider();
@@ -103,13 +142,14 @@ export function createSandboxProvider(): SandboxProvider {
 
 export function getE2bSandboxReadiness(): E2bSandboxReadiness {
   const config = getE2bSandboxConfig();
-  const providerSelected = process.env.DATASWARM_SANDBOX_PROVIDER === "e2b";
+  const providerSelected = sandboxProviderSelection() === "e2b";
   const apiKeyConfigured = Boolean(process.env.E2B_API_KEY);
   const templateVerification = getE2bTemplateVerification(config.template);
   const liveSmokeReceipt = readE2bLiveSmokeReceipt(getE2bLiveSmokeReceiptPath(), config.template);
-  const modelMode = process.env.DATASWARM_SANDBOX_AGENT_MODEL === "real" ? "real" : "deterministic";
+  const modelMode = sandboxAgentModelMode();
   const modelSecretsForwarding =
     modelMode === "real" && process.env.DATASWARM_SANDBOX_ALLOW_MODEL_SECRETS === "1" ? "enabled" : "disabled";
+  const proxyReadiness = getSandboxToolProxyReadiness();
   const verificationCommands = [
     "node scripts/e2b-template-smoke.mjs",
     "node scripts/e2b-readiness-smoke.mjs",
@@ -120,6 +160,9 @@ export function getE2bSandboxReadiness(): E2bSandboxReadiness {
     "E2B_API_KEY",
     "DATASWARM_SANDBOX_PROVIDER=e2b",
     "DATASWARM_E2B_TEMPLATE_VERIFIED=1 or DATASWARM_E2B_TEMPLATE_BUILD_ID or local template verification receipt",
+    ...(proxyReadiness.mode === "parent"
+      ? ["public DATASWARM_SANDBOX_TOOL_PROXY_URL or DATASWARM_PUBLIC_BASE_URL reachable from E2B"]
+      : []),
   ];
   const missingEnv = [
     ...(apiKeyConfigured ? [] : ["E2B_API_KEY"]),
@@ -127,6 +170,7 @@ export function getE2bSandboxReadiness(): E2bSandboxReadiness {
     ...(templateVerification.templateVerified
       ? []
       : ["DATASWARM_E2B_TEMPLATE_VERIFIED=1 or DATASWARM_E2B_TEMPLATE_BUILD_ID or local template verification receipt"]),
+    ...proxyReadiness.missingEnv,
   ];
   const readinessReasons = [
     ...(providerSelected ? [] : ["E2B provider is not selected for orchestrator sandbox execution."]),
@@ -137,6 +181,11 @@ export function getE2bSandboxReadiness(): E2bSandboxReadiness {
     ...(liveSmokeReceipt.liveSmokeVerified
       ? [`E2B live smoke receipt recorded at ${liveSmokeReceipt.liveSmokeVerifiedAt}.`]
       : ["E2B live smoke receipt is not recorded; run the live smoke after credentials and template verification are ready."]),
+    ...(proxyReadiness.readyForExternalSandbox
+      ? [`Sandbox capability callback is configured for external E2B access via ${proxyReadiness.mode} mode.`]
+      : [
+          "Sandbox capability callback is not externally reachable; provide a public HTTPS proxy/capability URL or URL file before real E2B branch tool use.",
+        ]),
     ...(config.template === DATASWARM_E2B_TEMPLATE_ALIAS
       ? ["Using the canonical DataSwarm E2B template alias."]
       : ["Using a custom E2B template override; verify it packages the DataSwarm sandbox agent."]),
@@ -158,7 +207,8 @@ export function getE2bSandboxReadiness(): E2bSandboxReadiness {
     `Run verification: ${verificationCommands.join(" && ")}`,
   ];
   const readyForLiveSmoke = apiKeyConfigured;
-  const readyForOrchestrator = providerSelected && apiKeyConfigured && templateVerification.templateVerified;
+  const readyForOrchestrator =
+    providerSelected && apiKeyConfigured && templateVerification.templateVerified && proxyReadiness.readyForExternalSandbox;
   return {
     providerSelected,
     sdkDependency: "@e2b/code-interpreter",
@@ -178,7 +228,7 @@ export function getE2bSandboxReadiness(): E2bSandboxReadiness {
     liveSmokeElapsedMs: liveSmokeReceipt.liveSmokeElapsedMs,
     timeoutMs: config.timeoutMs,
     retryMaxAttempts: getSandboxBranchMaxAttempts(),
-    sandboxAgentProtocol: "dataswarm.sandbox-agent.v1",
+    sandboxAgentProtocol: sandboxAgentProtocol(),
     modelMode,
     modelSecretsForwarding,
     templateBuildCommand: DATASWARM_E2B_TEMPLATE_BUILD_COMMAND,
@@ -194,6 +244,7 @@ export function getE2bSandboxReadiness(): E2bSandboxReadiness {
       providerSelected,
       apiKeyConfigured,
       templateVerified: templateVerification.templateVerified,
+      proxyReady: proxyReadiness.readyForExternalSandbox,
     }),
   };
 }
@@ -212,7 +263,7 @@ class MockSandboxProvider implements SandboxProvider {
         metadata: {
           context_bundle_uri: job.contextBundleUri,
           provider_mode: "mock",
-          agent_protocol: "dataswarm.sandbox-agent.v1",
+          agent_protocol: job.agentProtocol ?? sandboxAgentProtocol(),
           timeout_ms: getSandboxBranchTimeoutMs(),
           max_attempts: maxAttempts,
         },
@@ -348,7 +399,7 @@ class E2bSandboxProvider implements SandboxProvider {
               context_bundle_uri: job.contextBundleUri,
               provider_mode: "e2b",
               template: template ?? "default-code-interpreter",
-              agent_protocol: "dataswarm.sandbox-agent.v1",
+              agent_protocol: job.agentProtocol ?? sandboxAgentProtocol(),
               timeout_ms: timeoutMs,
               attempt,
               max_attempts: maxAttempts,
@@ -363,6 +414,7 @@ class E2bSandboxProvider implements SandboxProvider {
             envs: {
               DATASWARM_BRANCH_ID: job.branchId,
               DATASWARM_MODEL_PROFILE: job.modelProfile,
+              DATASWARM_SANDBOX_AGENT_PROTOCOL: job.agentProtocol ?? sandboxAgentProtocol(),
               ...e2bSandboxModelEnv(),
             },
           });
@@ -517,14 +569,61 @@ function executeLocalSandboxAgent(job: SandboxBranchJob, executionMode: "mock" |
 }
 
 function buildSandboxAgentJob(job: SandboxBranchJob, executionMode: "mock" | "e2b" | "local-smoke") {
+  const protocol = job.agentProtocol ?? sandboxAgentProtocol();
+  const budgets = job.budgets ?? sandboxAgentBudgets();
+  const allowedTools = job.parentToolProxy?.allowedTools ?? sandboxAllowedTools();
+  const parentToolProxy =
+    job.parentToolProxy ??
+    (job.conversationId && job.taskId && job.traceId && job.traceSpanId
+      ? buildSandboxToolProxyConfig({
+          runId: job.runId,
+          conversationId: job.conversationId,
+          taskId: job.taskId,
+          branchId: job.branchId,
+          sandboxSessionId: job.sandboxSessionId,
+          agentSessionId: job.agentSessionId,
+          traceId: job.traceId,
+          traceSpanId: job.traceSpanId,
+          allowedTools,
+        })
+      : undefined);
   return {
+    protocolVersion: protocol,
+    agentProtocol: protocol,
     branchId: job.branchId,
+    runId: job.runId,
+    conversationId: job.conversationId,
+    taskId: job.taskId,
+    sandboxSessionId: job.sandboxSessionId,
+    agentSessionId: job.agentSessionId,
     agentName: job.agentName,
     modelProfile: job.modelProfile,
     objective: job.objective,
     instruction: job.instruction,
     contextBundleUri: job.contextBundleUri,
+    contextBundleContent: job.contextBundleContent,
     executionMode,
+    maxSteps: budgets.maxSteps,
+    maxToolCalls: budgets.maxToolCalls,
+    maxRuntimeMs: budgets.maxRuntimeMs,
+    maxOutputTokens: budgets.maxOutputTokens,
+    toolCatalog: job.toolCatalog ?? buildSandboxToolCatalog(),
+    capabilityPlane: parentToolProxy
+      ? {
+          protocolVersion: "dataswarm.capability-plane.v4",
+          invokeUrl: parentToolProxy.capabilityInvokeUrl || parentToolProxy.url,
+          authMode: parentToolProxy.authMode,
+          allowedCapabilities: parentToolProxy.allowedTools,
+          manifest: buildCapabilityManifest(parentToolProxy.allowedTools),
+        }
+      : undefined,
+    skillManifests: job.skillManifests ?? [],
+    parentToolProxy,
+    artifactPolicy: job.artifactPolicy ?? {
+      allowedKinds: ["markdown", "html", "json", "csv", "image"],
+      maxBytes: 2_000_000,
+      allowBase64: true,
+    },
     sandboxModel: buildSandboxModelConfig(job.modelProfile),
   };
 }
@@ -533,18 +632,20 @@ function buildSandboxModelConfig(modelProfile: string) {
   const model = process.env.DATASWARM_SANDBOX_AGENT_MODEL_NAME ?? (modelProfile.includes(":") ? modelProfile.split(":").at(-1) : modelProfile);
   const deepseekBaseUrl = process.env.DEEPSEEK_BASE_URL ?? "";
   return {
-    mode: process.env.DATASWARM_SANDBOX_AGENT_MODEL === "real" ? "real" : "deterministic",
+    mode: sandboxAgentModelMode(),
     model,
     baseUrlEnv: "DEEPSEEK_BASE_URL",
     apiKeyEnv: "DEEPSEEK_API_KEY",
     authScheme: process.env.DATASWARM_SANDBOX_AGENT_AUTH_SCHEME ?? (deepseekBaseUrl.includes("api.deepseek.com") ? "bearer" : "raw"),
     maxTokens: Number(process.env.DATASWARM_SANDBOX_AGENT_MAX_TOKENS ?? 900),
+    actionMaxTokens: Number(process.env.DATASWARM_SANDBOX_AGENT_ACTION_MAX_TOKENS ?? 900),
+    jsonMode: process.env.DATASWARM_SANDBOX_AGENT_JSON_MODE === "1",
     timeoutSeconds: Number(process.env.DATASWARM_SANDBOX_AGENT_TIMEOUT_SECONDS ?? 60),
   };
 }
 
 function e2bSandboxModelEnv() {
-  if (process.env.DATASWARM_SANDBOX_AGENT_MODEL !== "real") {
+  if (sandboxAgentModelMode() !== "real") {
     return {};
   }
   if (process.env.DATASWARM_SANDBOX_ALLOW_MODEL_SECRETS !== "1") {
@@ -860,10 +961,12 @@ function readinessStatus({
   providerSelected,
   apiKeyConfigured,
   templateVerified,
+  proxyReady,
 }: {
   providerSelected: boolean;
   apiKeyConfigured: boolean;
   templateVerified: boolean;
+  proxyReady: boolean;
 }): E2bSandboxReadiness["status"] {
   if (!apiKeyConfigured) {
     return "needs_credentials";
@@ -873,6 +976,9 @@ function readinessStatus({
   }
   if (!templateVerified) {
     return "needs_template_verification";
+  }
+  if (!proxyReady) {
+    return "needs_public_callback";
   }
   return "ready";
 }

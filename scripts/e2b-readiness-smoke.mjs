@@ -69,20 +69,21 @@ expect(
     /readyForOrchestrator/.test(provider) &&
     /needs_credentials/.test(provider) &&
     /needs_provider_selection/.test(provider) &&
-    /needs_template_verification/.test(provider),
+    /needs_template_verification/.test(provider) &&
+    /needs_public_callback/.test(provider),
   "readiness should tell operators what is missing and which commands verify progress",
 );
 expect(
-  "readiness gates orchestrator on template verification",
+  "readiness gates orchestrator on template verification and public callback",
   /templateVerified/.test(provider) &&
     /templateVerificationSource/.test(provider) &&
     /DATASWARM_E2B_TEMPLATE_VERIFIED/.test(provider) &&
     /DATASWARM_E2B_TEMPLATE_BUILD_ID/.test(provider) &&
     /DATASWARM_E2B_TEMPLATE_VERIFICATION_RECEIPT/.test(provider) &&
     /readE2bTemplateVerificationReceipt/.test(provider) &&
-    /readyForOrchestrator = providerSelected && apiKeyConfigured && templateVerification\.templateVerified/.test(provider) &&
+    /readyForOrchestrator =\s*providerSelected && apiKeyConfigured && templateVerification\.templateVerified && proxyReadiness\.readyForExternalSandbox/.test(provider) &&
     /template_verified/.test(provider),
-  "real orchestrator sandbox execution should require an explicit template verification receipt from env or a durable local receipt",
+  "real orchestrator sandbox execution should require template verification and a public callback reachable from E2B",
 );
 expect(
   "local template receipt must match selected template",
@@ -148,6 +149,9 @@ if (process.env.DATASWARM_E2B_READINESS_SKIP_SERVER !== "1") {
       DATASWARM_E2B_TEMPLATE_VERIFICATION_RECEIPT: receiptPath,
       DATASWARM_E2B_LIVE_SMOKE_RECEIPT: liveReceiptPath,
       DATASWARM_SANDBOX_PROVIDER: "e2b",
+      DATASWARM_PUBLIC_BASE_URL: "https://dataswarm-readiness-smoke.example.com",
+      DATASWARM_SANDBOX_TOOL_PROXY_URL: "https://dataswarm-readiness-smoke.example.com/api/internal/sandbox/tool-proxy",
+      DATASWARM_SANDBOX_CAPABILITY_INVOKE_URL: "https://dataswarm-readiness-smoke.example.com/api/internal/capabilities/invoke",
       DATASWARM_E2B_TIMEOUT_MS: "34567",
     },
     stdio: ["ignore", "pipe", "pipe"],

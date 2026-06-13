@@ -1,11 +1,42 @@
 # DataSwarm Implementation Status
 
-> Last updated: 2026-06-12  
+> Last updated: 2026-06-14
 > Active goal: stabilize Agentic Runtime V2 and complete the gated path from planner-owned mock Swarm to real E2B sandbox execution.
 
 ## Current Canonical Status
 
+Latest V4 Capability Plane checkpoint, 2026-06-14:
+
+- Introduced `DataSwarm Capability Plane` runtime for parent-proxied sandbox tools.
+- Added `POST /api/internal/capabilities/invoke` and kept `/api/internal/sandbox/tool-proxy` as a compatibility route backed by the same runtime.
+- Sandbox jobs now include a `capabilityPlane` manifest and invoke URL; the sandbox agent prefers `capabilityPlane.invokeUrl`.
+- `web.search`, `artifact.create`, `file.read`, and `trace.query` now share the same capability invocation path, persisting `tool_call`, Observation, `capability.invoke.*` events, and compatibility `sandbox.tool_proxy.call.*` events.
+- Default `apps/web` dev startup no longer hardcodes `host.docker.internal`; it reads proxy/capability URLs from `data/e2b/*.txt` files when available.
+- Real E2B orchestrator readiness now requires a public parent proxy or capability callback URL. Local-only URLs such as `localhost`, `127.0.0.1`, and `host.docker.internal` are treated as not ready for external E2B callbacks.
+
+Checkpoint verification:
+
+```text
+npm --prefix apps/web run typecheck
+python3 -m py_compile sandbox/agent/dataswarm_sandbox_agent.py
+node --check scripts/sandbox-tool-proxy-e2e-smoke.mjs
+npm --prefix apps/web run lint
+node scripts/sandbox-tool-proxy-e2e-smoke.mjs  # PASS 40/40
+npm run smoke:sandbox-v3-plus-static          # PASS 29/29
+npm run smoke:sandbox-v3-plus-local           # PASS 25/25
+npm run smoke:sandbox-v3-plus-real-action     # PASS 15/15
+npm run smoke:swarm-verifier                  # PASS 12/12
+node scripts/e2b-readiness-smoke.mjs          # PASS 26/26
+DATASWARM_E2B_ORCHESTRATOR_V3_KEEP_ROWS=1 DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY=1 DATASWARM_E2B_ORCHESTRATOR_V3_COMPLEX_BENCHMARK=1 DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY_TUNNEL_COMMAND='ssh -p 443 -o StrictHostKeyChecking=no -o ServerAliveInterval=5 -R0:localhost:${DATASWARM_LOCAL_PORT} a.pinggy.io' DATASWARM_E2B_ORCHESTRATOR_V3_TUNNEL_TIMEOUT_MS=60000 DATASWARM_E2B_ORCHESTRATOR_V3_E2E_RUN_TIMEOUT_MS=420000 node scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs  # PASS 25/25
+```
+
+New design document: [E2B_BRANCH_AGENT_REACT_V4_CAPABILITY_PLANE.md](./E2B_BRANCH_AGENT_REACT_V4_CAPABILITY_PLANE.md).
+
+Preserved live evidence: conversation `conv_dfacf3e78ffa4069bf026410ab8b4018`, run `run_45753d885cff4261899a8e9f07a5b34b`. The preserved run proves 3 completed real E2B branch sessions, V4 capability plane configured in all branch quality signals, real-model action counts of 10 / 6 / 10, `fallbackActionCount=0`, 7 completed `tool_calls`, 7 `capability.invoke.started/completed` pairs, 7 compatibility `sandbox.tool_proxy.call.started/completed` pairs, post-settlement `swarm.reduce` and `swarm.verify`, 4 Markdown artifacts, and 1 recovered image artifact.
+
 Authoritative plan: [DATASWARM_CANONICAL_PLAN.md](./DATASWARM_CANONICAL_PLAN.md)
+
+Focused next-stage plan: [E2B_BRANCH_AGENT_REACT_V3_PLUS_PLAN.md](./E2B_BRANCH_AGENT_REACT_V3_PLUS_PLAN.md). This plan is the execution-ready bridge from the verified `dataswarm.sandbox-agent.v3` skeleton to a stricter E2B Branch Agent runtime with V3-native validation, explicit reflection/evidence verification actions, fallback degradation policy, live E2B-to-parent tool proxy proof, and complex-task benchmark gates. The V4 checkpoint now has a passing live E2B complex benchmark with parent-proxied tools, explicit A/B/C branch preservation, recovered image and Markdown/HTML artifacts, and post-settlement `swarm.reduce` / `swarm.verify` evidence.
 
 Current runtime truth:
 
@@ -21,10 +52,13 @@ Current runtime truth:
 | `file.read` | Real | implemented workspace-local file read adapter |
 | `approval.request` | Real | creates pending approval records; Run Trace/API support approve/reject decisions |
 | Skills | Managed local registry with local install/update | planner can select enabled skills and receives V2 manifests; Skills UI/API can inspect, enable/disable, install, and update local skill packs; remote marketplace flow pending |
-| Swarm | Planner-owned mock with model-provided branch plans + sandbox-agent runtime + independent reducer/verifier/reviewer + Run Trace timeline | `spawn_agent` and `spawn_swarm` enter Orchestrator; planner-provided branch definitions are preferred and recorded as `plan_source=model_branches`; branch heartbeat, internal action/observation events, failure, artifact recovery, model quality signals, `swarm.reduce`, merge, richer independent `swarm.verify` checks, optional `swarm.review`, and post-swarm finalize guardrails are bridged into parent run events and rendered in a dedicated Swarm Tree / Branch Timeline |
-| Sandbox agent model | Real local smoke verified | DataSwarm sandbox agent runs a lightweight action/observation loop and can call configured DeepSeek/OpenAI-compatible chat completions |
-| E2B | SDK + template contract + operator readiness diagnostics + live smoke verified | `@e2b/code-interpreter` path targets `dataswarm-agent-runtime`, imports or injects the DataSwarm sandbox agent, and preserves timeout/cancel/retry/recovery protocol; template build evidence is recorded in `data/e2b/template-verification.json`; a real external sandbox smoke is recorded in `data/e2b/live-smoke-receipt.json`; system snapshot exposes secret-safe status, missing env names, next steps, verification commands, explicit template verification receipt state, and live smoke receipt state; live orchestrator execution still requires runtime `E2B_API_KEY` plus `DATASWARM_E2B_TEMPLATE_VERIFIED=1`, `DATASWARM_E2B_TEMPLATE_BUILD_ID`, or a matching local receipt |
+| Swarm | Planner-owned bounded-parallel execution with model-provided branch plans + real-by-default sandbox-agent runtime + independent reducer/verifier/reviewer + Run Trace timeline | `spawn_agent` and `spawn_swarm` enter Orchestrator; planner-provided branch definitions are preferred and recorded as `plan_source=model_branches`; up to 10 branches are supported, `DATASWARM_SWARM_MAX_CONCURRENCY` caps parallel launch, default concurrency is 3, explicit 10-way parallel requests can use 10 when no operator cap is set; explicit user deliverables such as requested plots/images or Markdown/HTML reports are preserved as branch coverage requirements when the planner omits them; explicit user-labeled branch requirements such as `分支 A/B/C` or `Branch A/B/C` are converted into branch-specific instructions for the matching branch, including when the planner copied the full user prompt into every branch instruction; branch heartbeat, internal action/observation events, failure, artifact recovery, model quality signals, `swarm.reduce`, merge, richer independent `swarm.verify` checks, optional `swarm.review`, and post-swarm finalize guardrails are bridged into parent run events and rendered in a dedicated Swarm Tree / Branch Timeline |
+| Sandbox agent runtime | V3 model-driven ReAct loop implemented, v1/v2 compatibility retained; V4 hardening checkpoint passed | `dataswarm.sandbox-agent.v3` is now the default sandbox protocol. Each branch-local step requests one structured `SandboxAgentAction` from the sandbox action model when configured, validates it with a V3-native validator, executes `use_skill`, `read_context`, parent-proxied `call_tool`, local `run_python`, `create_artifact`, `reflect`, `revise_query`, `verify_evidence`, `request_more_context`, or `final_answer`, then feeds observations back into the next step. Real-model action parsing now tolerates Markdown fences, prose-wrapped JSON, nested action envelopes, OpenAI-compatible `tool_calls`, JSON-string arguments, `action_input`, `parameters`, `web_search` aliases, evidence/source field variants, and trailing commas before falling back. `real_model`, `mock_model`, and `deterministic_fallback` action sources are explicitly recorded in events and quality signals, including fallback degradation status, reflection count, evidence verification count, and real-model action ratio. `swarm.verify` now reads those V3 branch quality signals and treats hidden fallback as failed verification, degraded fallback as warning, and weak real-model action coverage as warning. v2 remains available for bounded-loop compatibility smoke coverage; v1 remains for the original linear branch executor smoke path. |
+| Sandbox parent tool proxy | Real API route + signed-token contract + live E2B callback verified | `POST /api/internal/sandbox/tool-proxy` verifies signed branch-scoped proxy tokens, rejects invalid signatures, executes allowlisted tools through the parent tool registry, persists `tool_calls`, creates `sandbox.proxy.*` Observations with branch/sandbox/action provenance, and emits `sandbox.tool_proxy.call.started/completed` run events. `npm run smoke:sandbox-tool-proxy` verifies this production API path with `web.search` routed through `mock.search`; the canonical receipt is `data/verification/canonical-phase4-sandbox-tool-proxy-e2e-latest.json`. The smoke now also validates `web.search`, `artifact.create`, `file.read`, and `trace.query` as allowlisted parent-proxy tools, and checks completed `tool_call + Observation + sandbox.*` linkage for each. The live E2B parent-proxy gate has passed with a custom HTTPS tunnel command, proving E2B can call the parent proxy when a public URL is supplied. The runtime supports `DATASWARM_SANDBOX_TOOL_PROXY_URL`, `DATASWARM_PUBLIC_BASE_URL`, and URL files so smoke tests can start the parent server first, then write a tunnel URL before creating branch jobs. |
+| Sandbox agent model | Real local smoke verified | Sandbox branches can call configured DeepSeek/OpenAI-compatible chat completions when `DATASWARM_SANDBOX_AGENT_MODEL=real` and model-secret forwarding is explicitly enabled; missing credentials produce structured `model_skipped` rather than fake model output. `npm run smoke:sandbox-v3-real-action` verifies the OpenAI-compatible `/chat/completions` path can drive six stepwise `SandboxAgentAction` decisions with `actionSource=real_model`, zero deterministic fallback, parent-proxied tool use, observations, image artifact manifest recovery, and parser tolerance for non-ideal model output wrappers. |
+| E2B | SDK + template contract + operator readiness diagnostics + live V1/V3 + Orchestrator V3 parent-proxy complex smoke verified | `@e2b/code-interpreter` path targets `dataswarm-agent-runtime`, imports or injects the DataSwarm sandbox agent, and preserves timeout/cancel/retry/recovery protocol; template build evidence is recorded in `data/e2b/template-verification.json`; the compatibility live sandbox receipt is recorded in `data/e2b/live-smoke-receipt.json`; the V3 real-action receipt is recorded in `data/e2b/live-smoke-receipt-v3-real-action.json` and proves real E2B + `dataswarm.sandbox-agent.v3` + DeepSeek/OpenAI-compatible stepwise `real_model` action selection with zero deterministic fallback; the live parent-proxy complex E2E smoke now verifies the production Orchestrator API path can spawn a three-branch real E2B swarm, bridge sandbox V3 `real_model` action events into the parent run, call parent-proxied `web.search` and `artifact.create`, persist branch observations with V3 quality signals, wait for `swarm.reduce` / `swarm.verify`, recover an image artifact plus Markdown report artifacts, and keep `fallbackActionCount=0`; system snapshot exposes secret-safe status, missing env names, next steps, verification commands, explicit template verification receipt state, and live smoke receipt state; live orchestrator execution still requires runtime `E2B_API_KEY` plus `DATASWARM_E2B_TEMPLATE_VERIFIED=1`, `DATASWARM_E2B_TEMPLATE_BUILD_ID`, or a matching local receipt, and parent-proxy execution still requires a public callback URL or working tunnel. |
 | Run cancellation | Real control-plane lifecycle | cancel API persists run cancellation metadata, fans out to non-terminal sandbox sessions, publishes run/sandbox cancellation events, and records terminal `cancelled` state separately from failures |
+| Artifact context flow (per-turn selection) | Realized | UI selection panel removed; user turns now persist artifact ids automatically through assistant artifact previews and metadata fallback, and orchestrator injects recovered artifact content into `latestUserMessage` context for every run. Default execution path remains real `swarm.e2b` when configured; `mock` requires explicit `DATASWARM_SANDBOX_PROVIDER=mock`. |
 | Self-improvement | Async internal runner + Run Trace operations | eval enqueues internal analysis; runner creates idempotent candidates from trace/eval evidence; Run Trace/API expose replayable analysis, shadow test, review patch bundle, and human decision lifecycle actions; `mark_applied` requires an operator-submitted verification receipt covering every required command; automatic source patching intentionally pending |
 
 Verification passed on 2026-06-11:
@@ -42,6 +76,8 @@ node scripts/skills-v2-smoke.mjs
 node scripts/skills-install-api-smoke.mjs
 node scripts/skills-observation-e2e-smoke.mjs
 node scripts/sandbox-agent-smoke.mjs
+node scripts/sandbox-agent-v2-smoke.mjs
+node scripts/sandbox-agent-v3-smoke.mjs
 node scripts/sandbox-agent-model-smoke.mjs
 node scripts/e2b-template-smoke.mjs
 node scripts/e2b-template-receipt-smoke.mjs
@@ -78,6 +114,81 @@ npm --prefix apps/web run build
 node scripts/e2b-sandbox-smoke.mjs
 ```
 
+Additional V3 sandbox agent verification passed on 2026-06-13:
+
+```text
+npm run smoke:sandbox-v3-real-action
+npm run smoke:sandbox-v3-plus-static
+npm run smoke:sandbox-v3-plus-local
+npm run smoke:sandbox-v3-plus-real-action
+npm run smoke:e2b-v3-real-action
+npm run smoke:e2b-orchestrator-v3-real-action
+npm run smoke:e2b-orchestrator-v3-parent-proxy
+npm run smoke:e2b-branch-complex-benchmark
+npm run smoke:sandbox-tool-proxy
+DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY=1 DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY_TUNNEL_COMMAND='ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=5 -R 80:localhost:${DATASWARM_LOCAL_PORT} serveo.net' DATASWARM_E2B_ORCHESTRATOR_V3_TUNNEL_TIMEOUT_MS=30000 node scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs
+```
+
+V4 upgrade checkpoint verification passed on 2026-06-13:
+
+```text
+node --check scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs
+npm --prefix apps/web run typecheck
+npm --prefix apps/web run lint
+npm run smoke:sandbox-v3-plus-static
+npm run smoke:sandbox-v3-real-action
+npm run smoke:swarm-parallel
+node scripts/swarm-action-plan-smoke.mjs
+node scripts/swarm-reducer-smoke.mjs
+npm run smoke:swarm-verifier
+node scripts/sandbox-agent-v3-plus-complex-benchmark-smoke.mjs
+```
+
+This checkpoint proves the current local code path now preserves explicit branch requirements, exposes compact live-complex failure diagnostics with optional row preservation, keeps the V3 real-action parser/loop healthy, and routes branch quality/artifact type coverage into `swarm.verify`. The live E2B complex benchmark is now proven in this environment with custom tunnel command execution.
+
+V4 live E2B complex benchmark verification passed on 2026-06-13:
+
+Latest verification refresh (this branch):
+
+```text
+node scripts/sandbox-agent-v3-plus-static-smoke.mjs  # PASS
+node scripts/sandbox-agent-v3-smoke.mjs             # PASS
+node scripts/sandbox-agent-v3-real-action-smoke.mjs  # PASS
+node scripts/sandbox-tool-proxy-e2e-smoke.mjs        # PASS
+node scripts/swarm-parallel-e2e-smoke.mjs            # PASS (15/15)
+DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY=1 node scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs  # SKIP (missing public callback URL)
+DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY=1 DATASWARM_E2B_ORCHESTRATOR_V3_COMPLEX_BENCHMARK=1 node scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs  # SKIP (missing public callback URL)
+DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY=1 DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY_TUNNEL_COMMAND='ssh -p 443 -o StrictHostKeyChecking=no -o ServerAliveInterval=5 -R0:localhost:${DATASWARM_LOCAL_PORT} a.pinggy.io' DATASWARM_E2B_ORCHESTRATOR_V3_TUNNEL_TIMEOUT_MS=60000 DATASWARM_E2B_ORCHESTRATOR_V3_COMPLEX_BENCHMARK=1 node scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs  # PASS (25/25)
+```
+
+```text
+DATASWARM_E2B_ORCHESTRATOR_V3_KEEP_ROWS_ON_FAILURE=1 \
+DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY=1 \
+DATASWARM_E2B_ORCHESTRATOR_V3_COMPLEX_BENCHMARK=1 \
+DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY_TUNNEL_COMMAND='ssh -p 443 -o StrictHostKeyChecking=no -o ServerAliveInterval=5 -R0:localhost:${DATASWARM_LOCAL_PORT} a.pinggy.io' \
+DATASWARM_E2B_ORCHESTRATOR_V3_TUNNEL_TIMEOUT_MS=60000 \
+DATASWARM_E2B_ORCHESTRATOR_V3_E2E_RUN_TIMEOUT_MS=420000 \
+node scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs
+```
+
+Result: 25/25 checks passed for preserved conversation `conv_20f646bee6f341a0ac2cc8824b860980`, run `run_38dc09406f9a407a9785d458d464abb8`. Evidence included: a production Next.js build with the existing non-blocking Turbopack NFT warning; a live HTTPS parent proxy tunnel; `swarm.plan` with `plan_source=model_branches`, `effective_concurrency=2`, `execution_mode=batched_parallel`, and branch-specific explicit requirements for A/B/C; three real E2B sandbox sessions with external ids; each branch entering `dataswarm.sandbox-agent.v3` with 10 `real_model` action decisions and `fallbackActionCount=0`; parent-proxied `web.search` and `artifact.create` calls persisted as parent `tool_calls` and `sandbox.proxy.*` Observations; recovered image artifact `art_7b80e638a3ac4bb389feedc892056bc8`; recovered Markdown report artifacts including `art_bc7e1c34352b4858beb8bae1dd30962b`; `swarm.reduce` after all three branch observations; `swarm.verify` passed all 11 checks; complex benchmark checks confirmed reflection, evidence verification, query revision or multiple searches, and durable report artifacts.
+
+This live checkpoint replaced the previous pending state for `e2b-branch-complex-benchmark`. The web-search provider used by this smoke was the configured parent `mock.search` provider, so it proves the parent-proxy tool-call/Observation contract from E2B, not real internet retrieval quality. The preserved run proves Markdown report recovery; a prior non-preserved successful run also produced HTML, but HTML is not used as durable evidence for this checkpoint. The remaining build warning is the known Turbopack NFT dynamic tracing warning for `next.config.ts -> registry -> sandbox-tool-proxy` and does not block build or smoke completion.
+
+Diagnostics API verification for `conv_20f646bee6f341a0ac2cc8824b860980` returned HTTP 200 and summarized 339 run events, 275 `sandbox.agent.event` rows, `swarm.verify=1`, `toolNames` including `web.search` and `artifact.create`, 3 branch observations, and 5 visible artifact candidates. It also correctly surfaced product-health observability gaps for UI submit/SSE/suggestions logs, which are non-blocking for the sandbox runtime gate but remain useful UI telemetry follow-up work.
+
+Result: 15/15 checks passed. This is a local OpenAI-compatible model endpoint smoke that exercises the same `mode=real` chat-completions path used by DeepSeek-style sandbox action models; it does not claim a live external DeepSeek or E2B call.
+
+The live E2B V3 real-action smoke also passed and wrote `data/e2b/live-smoke-receipt-v3-real-action.json`: real E2B sandbox id recorded, `dataswarm.sandbox-agent.v3` / `dataswarm.sandbox-runtime.v3`, `model=deepseek-v4-flash`, `modelSecretsForwarded=true`, `modelCallCompletedCount=6`, `realModelActionCount=6`, `fallbackActionCount=0`, `toolCompletedCount=1`, `observationCreatedCount=6`, `artifactCreatedCount=1`, and `imageArtifactCount=1`. This receipt is the first live proof that V3 stepwise branch actions can be chosen by the sandbox model inside E2B rather than by deterministic fallback. The same gate is available through canonical Phase 4 verification and passed with `node scripts/canonical-verification-runner.mjs --phase phase4 --only e2b-v3-real-action --require-live-e2b --receipt data/verification/canonical-phase4-e2b-v3-real-action-latest.json`.
+
+The Orchestrator-level E2B V3 parent-proxy smoke passed with 22/22 checks through a custom Serveo HTTPS tunnel command. It self-started a production Next.js server, confirmed secret-safe E2B readiness with `sandboxAgentProtocol=dataswarm.sandbox-agent.v3` and `modelMode=real`, submitted a planner-owned three-branch swarm, and verified parent-side evidence: `swarm.plan` with model-provided branches and bounded parallelism, `swarm.branch.started` exposing V3 budgets and parent proxy configuration, three completed real E2B sessions with external sandbox ids, bridged `sandbox.agent.event` rows including `sandbox.agent.action.proposed` with `actionSource=real_model`, parent-proxied `web.search` calls, branch Observations carrying V3 quality signals (`modelDrivenReactLoop=true`, `realModelActionRatio=1`, `fallbackActionCount=0`), terminal `swarm.reduce` / `swarm.verify`, and at least one recovered image artifact linked from branch observation metadata. This proves the parent Orchestrator can observe and verify E2B Branch Agent ReAct V3 behavior end-to-end while E2B calls back into the parent tool proxy.
+
+The sandbox parent tool proxy E2E smoke passed with 13/13 checks and its canonical Phase 4 focused gate passed with `node scripts/canonical-verification-runner.mjs --phase phase4 --only sandbox-tool-proxy-e2e --receipt data/verification/canonical-phase4-sandbox-tool-proxy-e2e-latest.json`. It proves the production route rejects invalid signed tokens and accepts a valid branch-scoped token, routes `web.search` through the parent tool registry, persists the `tool_call`, creates a completed `sandbox.proxy.web.search` Observation with branch/sandbox/action provenance, and publishes `sandbox.tool_proxy.call.started/completed` events on the target run. The live E2B parent-proxy smoke proves the same route is reachable from E2B when a public callback URL is supplied.
+
+The live E2B parent-proxy gate is now stricter and more operator-friendly. Without a reachable URL it remains gated with `node scripts/canonical-verification-runner.mjs --phase phase4 --only e2b-orchestrator-v3-parent-proxy --require-live-e2b --receipt data/verification/canonical-phase4-e2b-parent-proxy-latest.json`. The smoke can read the public callback from `DATASWARM_SANDBOX_TOOL_PROXY_URL_FILE` / `DATASWARM_PUBLIC_BASE_URL_FILE`, or start a dev-only tunnel with `DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY_AUTOTUNNEL=localtunnel`, or run any tunnel command that prints an HTTPS URL via `DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY_TUNNEL_COMMAND`. On this machine, `npx -y localtunnel --port 3234` did not produce a URL within the configured timeout, but the custom Serveo tunnel command did expose the parent proxy and the live E2B parent-proxy gate passed.
+
+The live E2B complex benchmark gate is registered as canonical Phase 4 gate `e2b-branch-complex-benchmark`. It runs the same Orchestrator V3 E2E smoke with `DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY=1` and `DATASWARM_E2B_ORCHESTRATOR_V3_COMPLEX_BENCHMARK=1`, raises sandbox budgets to 10 steps / 6 tool calls, and checks for branch reflection, evidence verification, query revision or multiple parent-proxy searches, image artifact recovery, durable report artifacts, parent-proxied `web.search`, and post-settlement `swarm.reduce` / `swarm.verify`. The latest live run passed with the Pinggy custom tunnel command documented above.
+
 Latest V2 tool-catalog calibration:
 
 - `web.search` is now the default model-facing `web_search` adapter in the seeded tool catalog and mock planner.
@@ -95,7 +206,7 @@ Latest V2 tool-catalog calibration:
 - Artifact persistence now de-dupes by `conversation + type + content_hash` instead of title, and the artifact drawer/API also fold historical duplicate rows by content hash; identical images recovered from multiple swarm branches now reference one canonical image artifact instead of creating repeated drawer entries. Artifact records now expose normalized provenance fields (`sourceTraceId`, `artifactKind`, `previewMode`, `sourceObservationIds`, `branchIds`, `createdByToolCallId`) and `qualitySignals` so the UI and diagnostics can inspect source lineage and artifact health without parsing raw metadata JSON.
 - `scripts/canonical-verification-runner.mjs` is the grouped phase runner for Phase 1-5 gates. It writes a secret-safe receipt to `data/verification/canonical-verification-latest.json`, records E2B readiness booleans without secret values, and reports live E2B gates as `gated_skip` unless real credentials/template receipt make the external sandbox path provable. Canonical verification receipts now flow into conversation diagnostics / `trace.query`, so self-improvement and operator diagnosis can see Phase 1-5 gate status instead of reading local JSON files manually.
 - `scripts/canonical-goal-audit.mjs` is the combined goal completion audit. Default mode verifies local receipt/document consistency while allowing explicit live E2B gating; `--require-live-e2b` now passes only because `data/verification/canonical-phase4-live-required-latest.json` records both a passed real external E2B sandbox smoke and a passed Orchestrator -> planner-owned `spawn_swarm` -> real E2B branch E2E gate.
-- `node scripts/agentic-loop-v2-smoke.mjs` now includes 69 checks, including generic `web.search` provider registry, DB provider schema seed, provider-wrapper invariants, event protocol E2E coverage, phase-grouped canonical verification runner coverage, canonical receipt diagnostics coverage, canonical goal completion audit coverage, trace.query diagnostic summary coverage, planner-provided Swarm branch definitions, independent Swarm reducer/verifier/reviewer coverage, the controlled E2B template receipt gate, the Run Trace system readiness view, the self-improvement queue health summary/API contract, and optional historical conversation diagnostics when `DATASWARM_SMOKE_CONVERSATION_ID` is supplied.
+- `node scripts/agentic-loop-v2-smoke.mjs` now includes 71 checks, including generic `web.search` provider registry, DB provider schema seed, provider-wrapper invariants, event protocol E2E coverage, phase-grouped canonical verification runner coverage, canonical receipt diagnostics coverage, canonical goal completion audit coverage, trace.query diagnostic summary coverage, planner-provided Swarm branch definitions, independent Swarm reducer/verifier/reviewer coverage, the controlled E2B template receipt gate, the Run Trace system readiness view, the self-improvement queue health summary/API contract, and optional historical conversation diagnostics when `DATASWARM_SMOKE_CONVERSATION_ID` is supplied.
 
 Smoke result:
 
@@ -112,6 +223,9 @@ Skills V2 smoke passed: 18/18 checks passed, including enabled-only planner cont
 Skills install API smoke passed: 13/13 checks passed against a self-started production server, including local skill pack file writes, SQLite sync, registry visibility, disable/enable update path, and default quality-check fill.
 Skills observation e2e smoke passed: 13/13 checks passed against a self-started production server, including model-proposed `use_skill`, durable `source_type=skill` Observation, selection reason, manifest context, alternatives metadata, `skill.selected`, `observation.created`, and replan linkage.
 Sandbox agent smoke passed: 26/26 checks passed, including heartbeat, internal action/observation lifecycle, terminal runtime quality signals, markdown runtime summary, failure structuring, and artifact recovery manifest.
+Sandbox agent V2 smoke passed: 18/18 checks passed, including v2 loop lifecycle, dotted action lifecycle, skill policy activation, scoped context read, parent-proxy tool request/completion, observation creation, local image artifact creation, model usage reporting, artifact recovery manifest, and v2 quality signals.
+Sandbox agent V3 smoke passed: 25/25 checks passed, including parent default protocol selection, provider v3 job support, V3-native validation, model-sourced action lifecycle, per-step model usage events, parent-proxy tool request/completion, reflection before final, evidence verification before final, observation creation, local image artifact creation, artifact recovery manifest, and quality signals proving `modelDrivenReactLoop=true`, `fallbackPolicyStatus=healthy`, and no deterministic fallback in mock-action-model mode. The V3+ static/local/real-action/complex-benchmark checks are now also registered as Phase 4 canonical gates: `sandbox-v3-plus-static`, `sandbox-v3-plus-local`, `sandbox-v3-plus-real-action`, and `sandbox-v3-plus-complex-benchmark`.
+Focused V3+ Phase 4 verification passed on 2026-06-13 with `node scripts/canonical-verification-runner.mjs --phase phase4 --only sandbox-v3-plus-static,sandbox-v3-plus-local,sandbox-v3-plus-real-action,sandbox-v3-plus-complex-benchmark --receipt data/verification/canonical-phase4-sandbox-v3-plus-latest.json`: 4/4 passed, 0 failed, 0 gated. This proves the V3+ validator/action contract, local reflection/evidence verification loop, OpenAI-compatible real-action path, local complex branch benchmark, Markdown/HTML/image artifact manifest coverage, query revision, evidence verification, and scoped context request behavior are covered by canonical verification. The live E2B parent-proxy smoke separately proves the E2B callback path; the stricter live complex benchmark remains pending.
 Sandbox agent model smoke passed: 12/12 checks passed when DeepSeek env is loaded from `apps/web/.env.local`, including real model call, action/observation lifecycle, runtime counts, and recovery readiness.
 E2B template smoke passed: 9/9 checks passed, including Dockerfile packaging, default template alias, documented build command, local entrypoint readiness, and live smoke lifecycle coverage.
 E2B template receipt smoke passed: 10/10 checks passed, including controlled receipt generation, default rejection without template build evidence, explicit local-contract-only mode, template contract smoke execution before receipt write, and Dockerfile/entrypoint/sandbox-agent hash evidence.
@@ -144,6 +258,8 @@ Sandbox retry e2e smoke passed: 19/19 checks passed against a self-started mock 
 Artifact quality smoke passed: 9/9 checks passed, including normalized artifact `qualitySignals`, metadata recomputation after provenance merges, Artifact panel rendering, canonical/schema/status documentation coverage, and root `smoke:artifact` script wiring.
 Swarm image artifact e2e smoke passed: 20/20 checks passed against a self-started mock production server after refreshing the production build, including sandbox visualization planner selection, content-hash de-duped canonical image artifact recovery, every branch Observation appended to the canonical image artifact provenance, artifact API provenance and quality fields, image-mode `artifact.created` / `artifact.preview.ready` events, assistant message artifact preview parts, requested-image verifier coverage, conversation artifacts API visibility, preview endpoint image bytes, and post-smoke cleanup. The skip-build fast path passed 19/19 against the refreshed build, including the artifact quality-signal API assertions.
 Swarm trace UI smoke passed: 9/9 checks passed, including Run Trace swarm view, persisted event grouping, branch timeline rendering, reduce/merge separation, and dedicated Verify/Review panels for `swarm.verify` and `swarm.review`.
+Swarm parallel execution smoke passed: validates 10-branch planning, `DATASWARM_SWARM_MAX_CONCURRENCY`, bounded `Promise.allSettled` worker execution, settled-before-reduce aggregation, concurrency event fields, event protocol coverage, and Run Trace concurrency/batch rendering.
+Swarm parallel E2E smoke added: `npm run smoke:swarm-parallel-e2e` starts a mock production server, launches a 6-branch swarm with concurrency 3, verifies first-wave branch starts before any terminal branch event, checks batch/slot metadata, confirms `swarm.reduce` runs after all branch terminal events, and verifies independent sandbox session metadata.
 Approval lifecycle smoke passed: 6/6 checks passed.
 Self-improvement async smoke passed: 12/12 checks passed, including replayable `run_async_analysis`, idempotent candidate generation per eval check, E2B/template-specific verification plans that include the template receipt gate, and internal worker events.
 Self-improvement diagnostics smoke passed: 12/12 checks passed, including self-started production API execution for `run_diagnostics_analysis`, conversion of diagnostics remediation into de-duplicated review-gated candidates, E2B preflight/live-smoke verification plans, canonical verification remediation candidate generation, and durable diagnostics-analysis events.
@@ -163,7 +279,7 @@ Build result:
 npm --prefix apps/web run build
 ```
 
-Build passes. Turbopack still emits one warning for the intentional dynamic local-file capability used by `file.read`.
+Build passes. Turbopack still emits one non-blocking NFT trace warning through `next.config.ts -> tools/registry.ts -> sandbox-tool-proxy.ts -> /api/internal/sandbox/tool-proxy`; this is tracked as cleanup work and did not block build, typecheck, lint, or smoke gates.
 
 E2B smoke result:
 
@@ -652,7 +768,7 @@ returned no matches, confirming implementation files did not introduce the old m
 - Added `SandboxProvider` abstraction.
 - Added deterministic local mock sandbox provider.
 - Added E2B provider boundary with secret-safe `E2B_API_KEY` configuration.
-- Added `DATASWARM_SANDBOX_PROVIDER=mock` local default.
+- Default sandbox provider is now real E2B by default (`DATASWARM_SANDBOX_PROVIDER=e2b`); mock is only used when `DATASWARM_SANDBOX_PROVIDER=mock`.
 - Added swarm runtime with:
   - deterministic branch planning
   - research branch
