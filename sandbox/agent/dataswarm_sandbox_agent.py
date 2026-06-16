@@ -2911,9 +2911,9 @@ def call_parent_tool(job: Dict[str, Any], action_id: str, tool_name: str, tool_i
         if endpoint not in deduped_endpoints:
             deduped_endpoints.append(endpoint)
     payload_bytes = json.dumps(body).encode("utf-8")
-    last_error: Dict[str, Any] | None = None
-
+    endpoint_attempts: List[Dict[str, Any]] = []
     for endpoint in deduped_endpoints:
+        endpoint_error: Dict[str, Any] | None = None
         for attempt in (1, 2):
             if attempt > 1:
                 time.sleep(0.7)
@@ -2947,14 +2947,14 @@ def call_parent_tool(job: Dict[str, Any], action_id: str, tool_name: str, tool_i
                 except Exception:
                     body_preview = ""
                 if exc.code in {500, 502, 503, 504, 429, 408, 520, 521, 523} and attempt < 2:
-                    last_error = {
+                    endpoint_error = {
                         "status": exc.code,
                         "message": body_preview or f"{exc.__class__.__name__}: {exc.reason}",
                         "endpoint": endpoint,
                         "attempt": attempt,
                     }
                     continue
-                last_error = {
+                endpoint_error = {
                     "status": exc.code,
                     "message": body_preview,
                     "endpoint": endpoint,
@@ -2964,32 +2964,35 @@ def call_parent_tool(job: Dict[str, Any], action_id: str, tool_name: str, tool_i
             except Exception as exc:
                 message = str(exc)[:500]
                 if attempt < 2:
-                    last_error = {
+                    endpoint_error = {
                         "message": message,
                         "errorType": exc.__class__.__name__,
                         "endpoint": endpoint,
                         "attempt": attempt,
                     }
                     continue
-                last_error = {
+                endpoint_error = {
                     "message": message,
                     "errorType": exc.__class__.__name__,
                     "endpoint": endpoint,
                     "attempt": attempt,
                 }
                 break
-        if last_error is None:
+        if endpoint_error is None:
             continue
+        endpoint_attempts.append(endpoint_error)
 
+    final_error = endpoint_attempts[-1] if endpoint_attempts else {}
     return {
         "status": "failed",
         "error": {
             "code": "proxy_http_error",
-            "status": last_error.get("status"),
-            "message": last_error.get("message", ""),
-            "endpoint": last_error.get("endpoint"),
-            "attempt": last_error.get("attempt"),
-            "errorType": last_error.get("errorType"),
+            "status": final_error.get("status"),
+            "message": final_error.get("message", ""),
+            "endpoint": final_error.get("endpoint"),
+            "attempt": final_error.get("attempt"),
+            "errorType": final_error.get("errorType"),
+            "attempts": endpoint_attempts,
         },
     }
 

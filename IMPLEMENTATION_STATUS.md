@@ -12,6 +12,11 @@
   - 对每个端点增加 2 次重试（含重试间隔），并把失败原因汇总为 `endpoint/attempt/status/errorType`，返回给上层用于 diagnostics 与 verifier 复盘。
 - 这次改动是对“real action 可执行但工具调用仍失败”的高价值修补：优先恢复真实 `tool_calls`、`Observation`、`run_events` 写入链路，再进入下一步复杂基准复测。
 
+## 2026-06-16 Progress Note: parent-proxy fallback retry flow corrected
+
+- 修复 `sandbox/agent/dataswarm_sandbox_agent.py` 的 `call_parent_tool` fallback 逻辑：避免在首个端点失败后立即回退到失败结论，确保同一端点重试结束后再尝试兜底端点。
+- 在 `attempts` 中记录每个端点的最终失败明细，保留 `endpoint/attempt/status/errorType/message`，让 diagnostics 能区分“端点本身失败”与“网关抖动”。
+
 ## 2026-06-16 Progress Note: parent-proxy reachability helper bugfix
 
 - `scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs` 中的 `verifyCallbackReachability` 重试辅助函数 `waitForValidReachabilityResult` 识别到了一个作用域回归（引用未定义变量 `checks` 导致脚本运行时中断）。
