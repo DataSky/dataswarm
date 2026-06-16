@@ -1,5 +1,11 @@
 import { createAgentSession, updateAgentSessionStatus } from "../repositories/agent-sessions";
-import { createTextArtifact, listRunArtifactsForBranch, mergeArtifactMetadata, type ArtifactRecord } from "../repositories/artifacts";
+import {
+  createTextArtifact,
+  createBinaryArtifact,
+  listRunArtifactsForBranch,
+  mergeArtifactMetadata,
+  type ArtifactRecord,
+} from "../repositories/artifacts";
 import { createContextBundle } from "../repositories/context-bundles";
 import { createObservation } from "../repositories/observations";
 import { createSandboxSession } from "../repositories/sandbox-sessions";
@@ -77,6 +83,7 @@ export type BranchFinal = {
   unsupportedClaims: string[];
   assumptions?: string[];
   limitations: string[];
+  qualitySignals?: Record<string, unknown>;
 };
 
 export type SwarmBranch = {
@@ -2275,8 +2282,6 @@ async function recoverSandboxArtifacts(input: {
       deduped: artifact.deduped,
       branchId: input.branchId,
       branchIds: [input.branchId],
-      artifactKind: artifact.artifactKind,
-      qualitySignals: artifact.qualitySignals,
     });
     if (!artifact.deduped) {
       await publishArtifactEvents({
@@ -2305,12 +2310,27 @@ function formatBranchArtifacts(
     .join("; ");
 }
 
-function publicBranchArtifact(artifact: BranchArtifactSummary) {
+type PublicBranchArtifactInput =
+  | BranchArtifactSummary
+  | {
+      id: string;
+      type: string;
+      title: string;
+      mimeType?: string | null;
+      storageUri?: string | null;
+      deduped?: boolean;
+      branchId?: string;
+      branchIds?: string[];
+      artifactKind?: string | null;
+      qualitySignals?: Record<string, unknown>;
+    };
+
+function publicBranchArtifact(artifact: PublicBranchArtifactInput) {
   return {
     id: artifact.id,
     type: artifact.type,
     title: artifact.title,
-    mimeType: artifact.mimeType,
+    mimeType: artifact.mimeType ?? "application/octet-stream",
     deduped: artifact.deduped,
     branchId: artifact.branchId,
     branchIds: artifact.branchIds,
@@ -2338,6 +2358,21 @@ function imageExtension(value: "image/png" | "image/svg+xml" | "image/jpeg"): "p
 
 function branchEvidenceLevel() {
   return sandboxProviderSelection() === "e2b" ? "real" : "mock";
+}
+
+function parseJsonObject(value: string | null): Record<string, unknown> {
+  if (!value) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return {};
+  } catch {
+    return {};
+  }
 }
 
 function normalizeBranchError(error: unknown): {

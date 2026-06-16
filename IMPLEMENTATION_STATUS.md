@@ -20,6 +20,22 @@
   - `the name uniqueStrings is defined multiple times`
 - No live verification claims are made yet; next phases still require real E2B tool/proxy/finality smoke and complex benchmark replay for closure.
 
+## 2026-06-16 V4.1 Recovery Checkpoint
+
+- Closed the remaining `apps/web` runtime compile blockers introduced during V4 hardening.
+  - Repaired `publicBranchArtifact` typing for parent capability artifacts with nullable `mimeType` / `storageUri`.
+  - Added `BranchFinal.qualitySignals` in the shared branch contract type.
+  - Added missing `parseJsonObject` helper import-equivalent in `swarm.ts`.
+  - Included `createBinaryArtifact` import in branch runtime recovery path.
+  - Fixed `artifact.create` substance path typing for `json/image_metadata` classification.
+  - Removed invalid assumptions on `createBinaryArtifact` return payload fields where DB-backed metadata is not guaranteed.
+- Re-ran validation gates:
+  - `npm --prefix apps/web run typecheck` ✅
+  - `npm run smoke:sandbox-tool-proxy` ✅ (40/40)
+  - `npm run smoke:swarm-parallel` ✅ (8/8)
+- Current residuals remain external-gateway and live-complex proof stages:
+  - `real` E2B orchestration with public tunnel, parent-proxy callback, and complex benchmark replay.
+
 # DataSwarm Implementation Status
 
 > Last updated: 2026-06-16

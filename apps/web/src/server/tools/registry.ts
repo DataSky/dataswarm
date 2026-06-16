@@ -635,7 +635,7 @@ async function executeArtifactCreateAction(input: {
       toolName: input.action.toolName,
       agentSessionId: input.agentSessionId,
     });
-    const storageArtifactType = spec.type === "image_metadata" ? "json" : spec.type;
+    const storageArtifactType = spec.type === "image_metadata" ? "json" : (spec.type as "markdown" | "html" | "json");
     logServer("info", "tool.artifact.create.start", {
       runId: input.runId,
       toolCallId: toolCall.id,
@@ -1410,7 +1410,8 @@ function classifyTextArtifactSubstance(input: {
   sourceObservationIds: string[];
 }) {
   const plainText = stripMarkup(input.content);
-  const sectionCount = countSections(input.content, input.type);
+  const sectionCount =
+    input.type === "json" || input.type === "image_metadata" ? 0 : countSections(input.content, input.type);
   const characterCount = plainText.length;
   const evidenceCitationCount = countEvidenceCitations(input.content, input.sourceObservationIds);
   const runtimeSummaryLike = isRuntimeSummaryLike(input.content);
