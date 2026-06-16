@@ -2087,10 +2087,6 @@ async function buildSandboxSkillManifests(branch: SwarmBranch) {
   }));
 }
 
-function uniqueStrings(values: string[]) {
-  return Array.from(new Set(values));
-}
-
 async function publishBranchObservationEvent(input: {
   runId: string;
   conversationId: string;
