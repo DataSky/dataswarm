@@ -30,6 +30,18 @@
   - 新增同类检查验证 `trace.query` 观察记录中 `metadata.trace_query` 已标记 `usedActiveConversationFallback: true` 且 `resolvedConversationId` 为当前会话。
 - 同一文件中仍保留原始基线 `conversation_id` 与 capability-plane 调用校验，确保新增场景不引入回归。
 
+## 2026-06-16 Progress Note: public-endpoint real-action smoke now passes
+
+- 实测执行：
+  - `DATASWARM_PUBLIC_BASE_URL=https://dataswarm-dev.metad.ai DATASWARM_SANDBOX_TOOL_PROXY_URL=https://dataswarm-dev.metad.ai/api/internal/sandbox/tool-proxy DATASWARM_SANDBOX_CAPABILITY_INVOKE_URL=https://dataswarm-dev.metad.ai/api/internal/capabilities/invoke npm run smoke:e2b-v3-real-action`
+- 结果：
+  - PASS（`status: "passed"`），`realModelActionCount=6`，`fallbackActionCount=0`，`modelDrivenReactLoop=true`；
+  - `toolCompletedCount=1`、`artifactCreatedCount=1`、`imageArtifactCount=1`；
+  - 质量信号显示 `parentToolProxyMode=parent`、`capabilityInvokeConfigured=true`。
+- 结论：
+  - 在明确公开回调参数面板下，真实 E2B + DeepSeek 模型循环与 `run_python` 可产出图像型分支产物；
+  - 当前剩余瓶颈主要为 `dataswarm-dev.metad.ai` 入口链路可用性（仍出现 `HTTP/2 530`），而非 E2B + 沙箱模型主链路本身。
+
 ## 2026-06-16 Progress Note: local verification slice rerun
 
 - 本轮重新执行关键闭环检查，结果可追溯：

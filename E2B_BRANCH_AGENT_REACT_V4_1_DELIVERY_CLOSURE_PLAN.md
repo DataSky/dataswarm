@@ -64,6 +64,21 @@ V4.1 turns the V4 E2B ReAct swarm from a runnable branch system into an evidence
   - `https://dataswarm-dev.metad.ai` 健康检查返回 `HTTP/2 530`，说明回调入口当前不可用于 E2B 回调。
 - 该项记录为外部环境依赖阻塞，不等于 V4.1 业务能力退化；待 tunnel/域名入口恢复后重试 Phase 6/7。
 
+## 2026-06-16 Progress Note: real-action smoke (with public callback) passes
+
+- 已执行：
+  - `DATASWARM_PUBLIC_BASE_URL=https://dataswarm-dev.metad.ai`
+  - `DATASWARM_SANDBOX_TOOL_PROXY_URL=https://dataswarm-dev.metad.ai/api/internal/sandbox/tool-proxy`
+  - `DATASWARM_SANDBOX_CAPABILITY_INVOKE_URL=https://dataswarm-dev.metad.ai/api/internal/capabilities/invoke`
+  - `npm run smoke:e2b-v3-real-action`
+- 结果：
+  - `status: "passed"`、`realModelActionCount=6`、`fallbackActionCount=0`
+  - `modelDrivenReactLoop=true`
+  - `toolCompletedCount=1`、`artifactCreatedCount=1`、`imageArtifactCount=1`
+  - 质量信号 `parentToolProxyMode=parent`、`capabilityInvokeConfigured=true`
+- 下一步：
+  - 保持此链路为 Phase 3/4 过渡证据；继续恢复 `dataswarm-dev.metad.ai` 入口可用性后，推进 `e2b-orchestrator-v3-parent-proxy` 与复杂基准。
+
 ## Non-Negotiables
 
 - Do not mark mock results as live.
