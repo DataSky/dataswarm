@@ -4,6 +4,12 @@
 - `DATASWARM_SANDBOX_AGENT_MODEL=mock|deterministic`、`DATASWARM_SANDBOX_TOOL_PROXY=mock|disabled`、`DATASWARM_SANDBOX_PROVIDER=mock` 等仍按既有约束直接拒绝。
 - 目标对齐：继续贯彻“默认真实模式”要求，确保本地服务误启动时有明确、可回放的拒绝行为；拒绝日志会展示真实环境变量取值而非规则函数内容。
 
+## 2026-06-16 Progress Note: parent-proxy reachability helper bugfix
+
+- `scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs` 中的 `verifyCallbackReachability` 重试辅助函数 `waitForValidReachabilityResult` 识别到了一个作用域回归（引用未定义变量 `checks` 导致脚本运行时中断）。
+- 本次已修复：重试函数现在显式接收检查项数量作为参数，避免脚本在做 reachability 预检时因为变量作用域错误提前失败，从而保持 parent-proxy 与复杂 benchmark 的真实性前置门禁链路可执行。
+- 对应提交：`adad820`，已推送到 `main`。
+
 ## 2026-06-16 Progress Note: diagnostics remediation command accuracy
 
 - 发现并修复 `apps/web/src/server/repositories/diagnostics.ts` 中若干失效的 `verificationCommands` 引用（如 `parent-tool-proxy-smoke`/`e2b-parent-proxy-smoke`/`e2b-complex-benchmark-smoke`）。
