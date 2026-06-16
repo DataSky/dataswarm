@@ -52,6 +52,14 @@ V4.1 turns the V4 E2B ReAct swarm from a runnable branch system into an evidence
   - 静态和本地能力/验证器通道维持通过。
   - 真实 E2B parent-proxy 与复杂基准仍等待有可达公网回调（Cloudflare Tunnel）后再执行。
 
+## 2026-06-16 Progress Note: parent-proxy external callback readiness gate
+
+- 继续尝试真实 E2B parent-proxy 验证时，暴露外部入口阻塞：
+  - `npm run smoke:e2b-orchestrator-v3-parent-proxy` -> SKIP（未设置可达 `PUBLIC_BASE_URL` / `SANDBOX_TOOL_PROXY_URL`）
+  - `npm run smoke:e2b-orchestrator-v3-parent-proxy:localtunnel` -> FAIL（localtunnel 启动未返回 HTTPS 地址）
+  - `https://dataswarm-dev.metad.ai` 健康检查返回 `HTTP/2 530`，说明回调入口当前不可用于 E2B 回调。
+- 该项记录为外部环境依赖阻塞，不等于 V4.1 业务能力退化；待 tunnel/域名入口恢复后重试 Phase 6/7。
+
 ## Non-Negotiables
 
 - Do not mark mock results as live.

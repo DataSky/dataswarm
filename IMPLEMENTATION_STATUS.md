@@ -26,6 +26,16 @@
     - 局部能力闭环与验证器闭环为绿灯，可在本地持续迭代。
     - 实际 E2B 真实可达阶段仍受外网回调条件约束，尚未进入 Phase 6（真实 E2B Parent-Proxy Smoke）和 Phase 7（真实 E2B complex benchmark）验证。
 
+## 2026-06-16 Progress Note: external callback readiness verification
+
+- 追加 parent-proxy 可达性验证结果：
+  - `npm run smoke:e2b-orchestrator-v3-parent-proxy` → **SKIP**（未设置可达 `PUBLIC`/`PROXY` URL）
+  - `npm run smoke:e2b-orchestrator-v3-parent-proxy:localtunnel` → **FAIL**（`localtunnel` 命令未成功返回 HTTPS URL）
+  - 固定 `dataswarm-dev.metad.ai` 直连命中 `HTTP/2 530`（Cloudflare 告警态），非脚本级参数错误导致，属于外网入口可用性阻塞。
+- 当前判断：
+  - V4.1 功能路径继续保持绿灯；
+  - 真实 E2B 严格验收仍被回调通道阻塞（需要确认 `dataswarm-dev.metad.ai` 反代与健康路由就绪）。
+
 ## 2026-06-15 V4.1 Delivery Closure Checkpoint - Evidence gates first slice
 
 - Baseline reviewed: conversation `conv_7d810a1e83cd4de4b612e354c210d3a0` reached real E2B branch completion, but failed closure because sandbox tool/proxy evidence was absent, image/HTML artifact coverage was missing, and branch outputs were runtime summaries rather than substantive deliverables.
