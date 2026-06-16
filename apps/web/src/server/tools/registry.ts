@@ -1133,6 +1133,10 @@ async function resolveTraceQueryTarget(input: Record<string, unknown>, context: 
     return { kind: "conversation_id", id: conversationId, conversationId };
   }
 
+  if (context.conversationId) {
+    return { kind: "conversation_id", id: context.conversationId, conversationId: context.conversationId };
+  }
+
   const runId = normalizeCurrentId(
     stringValue(
       inputRecord.run_id ??

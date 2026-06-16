@@ -4,6 +4,9 @@
 
 V4.1 turns the V4 E2B ReAct swarm from a runnable branch system into an evidence-closed delivery system. The acceptance bar is not that code paths exist; it is that a real E2B complex swarm can prove, by conversationId diagnostics, that branches used real model actions, reachable shared capabilities, recovered artifacts, and reducer/verifier gates after all branches settled.
 
+- Latest continuation note (2026-06-16): strengthened `trace.query` active-context fallback in `apps/web/src/server/tools/registry.ts` so missing/alias `conversation_id` can resolve to the active conversation automatically instead of failing as invalid target. This is tracked in
+  `IMPLEMENTATION_STATUS.md` under "trace.query active-context fallback hardening".
+
 ## Current Baseline
 
 - Baseline conversation: `conv_7d810a1e83cd4de4b612e354c210d3a0`.

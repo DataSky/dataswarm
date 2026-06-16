@@ -16,6 +16,13 @@
   - `npm run smoke:sandbox-tool-proxy` ✅ (40/40)
   - `npm run smoke:swarm-parallel` ✅ (8/8)
 
+## 2026-06-16 Progress Note: trace.query active-context fallback hardening
+
+- 继续推进 V4.1 Closure：在 `apps/web/src/server/tools/registry.ts` 强化 `resolveTraceQueryTarget`。
+- 当 `trace.query` 仅收到 `conversation_id`/`run_id`/`trace_id` 之外的空输入时，现在会自动回退到 `executeTraceQueryAction` 上下文中的 `conversationId`，避免沙箱模型输出 `conversation_id=current` 或省略上下文导致解析失败。
+- 同时补充 `conversation_id` 别名当前值的回退路径保持一致：`current`/`this`/`active`/`current_conversation`/`current-run`/`current_run` 在可用时仍映射到上层 active conversation。
+- 该修复是为“trace.query 输入未带会话参数就落库/diagnostics”这一类失败留痕问题提供直接的、可复用的修复路径。
+
 ## 2026-06-16 Progress Note: local verification slice rerun
 
 - 本轮重新执行关键闭环检查，结果可追溯：
