@@ -1,3 +1,11 @@
+## 2026-06-17 Progress Note: reducer failed-verification on missing BranchFinal and final HTML quality signals
+
+- Tightened `apps/web/src/server/runtime/swarm-reducer.ts` so reduction status becomes `failed_verification` whenever completed branches are missing `BranchFinal` records.
+- Runtime observations are still preserved as diagnostic `runtime_observation` branch items, but reducer recommendations now explicitly state they must not be treated as user-facing deliverable content.
+- Updated reduce trace completion in `apps/web/src/server/runtime/swarm.ts` so `failed_verification` closes the reduce span as failed instead of completed.
+- Added shared final HTML report quality metadata (`sectionCount`, `characterCount`, `evidenceCitationCount`, source counts, thresholds, and `deliverableEligible`) so final HTML artifacts can satisfy or fail the hardened artifact substance gates based on auditable metadata.
+- Extended `scripts/swarm-reducer-smoke.mjs` to guard the new BranchFinal hard-stop and final HTML quality signal contract.
+
 ## 2026-06-17 Progress Note: local contract smoke for complex E2B benchmark gates
 
 - Added `scripts/e2b-complex-benchmark-contract-smoke.mjs` and package script `smoke:e2b-complex-benchmark-contract` to pin the V4.1 complex benchmark validation contract locally.

@@ -75,7 +75,7 @@ export type SwarmReductionItem = {
 export type SwarmReductionResult = {
   reducerMode: "deterministic_runtime";
   assistedBy: string[];
-  status: "completed" | "partial" | "failed";
+  status: "completed" | "partial" | "failed" | "failed_verification";
   summary: string;
   branchItems: SwarmReductionItem[];
   conflictSignals: ReturnType<typeof detectContradictionSignals>;
@@ -86,6 +86,9 @@ export type SwarmReductionResult = {
     failedBranches: number;
     artifactCount: number;
     branchObservationCount: number;
+    branchFinalCount: number;
+    missingBranchFinalCount: number;
+    runtimeObservationFallbackCount: number;
   };
 };
 
@@ -126,8 +129,13 @@ export function buildSwarmReduction(input: SwarmReductionInput): SwarmReductionR
     ...branchItems.flatMap((item) => item.sections.map((section) => section.content)),
   ]);
   const branchCount = input.plan.branches.length;
+  const branchFinalCount = input.branchFinals?.length ?? 0;
+  const runtimeObservationFallbackCount = branchItems.filter((item) => item.source === "runtime_observation").length;
+  const missingBranchFinalCount = Math.max(0, input.completedBranches - branchFinalCount);
   const status =
-    input.completedBranches === branchCount && conflictSignals.length === 0
+    missingBranchFinalCount > 0
+      ? "failed_verification"
+      : input.completedBranches === branchCount && conflictSignals.length === 0
       ? "completed"
       : input.completedBranches > 0
         ? "partial"
@@ -139,6 +147,8 @@ export function buildSwarmReduction(input: SwarmReductionInput): SwarmReductionR
     artifactIds: input.artifactIds,
     branchObservationIds: input.branchObservationIds,
     conflictSignalCount: conflictSignals.length,
+    missingBranchFinalCount,
+    runtimeObservationFallbackCount,
   });
 
   return {
@@ -155,6 +165,9 @@ export function buildSwarmReduction(input: SwarmReductionInput): SwarmReductionR
       failedBranches: input.failedBranches,
       artifactCount: input.artifactIds.length,
       branchObservationCount: input.branchObservationIds.length,
+      branchFinalCount,
+      missingBranchFinalCount,
+      runtimeObservationFallbackCount,
     },
   };
 }
@@ -267,16 +280,22 @@ function normalizeBranchFinalClaims(
 
 function summarizeReduction(input: SwarmReductionInput, conflictSignalCount: number) {
   const branchCount = input.plan.branches.length;
+  const branchFinalCount = input.branchFinals?.length ?? 0;
+  const missingBranchFinalCount = Math.max(0, input.completedBranches - branchFinalCount);
   const statusText =
     input.failedBranches === 0
       ? `${input.completedBranches}/${branchCount} branches completed`
       : `${input.completedBranches}/${branchCount} branches completed, ${input.failedBranches} failed`;
   const artifactText = `${input.artifactIds.length} artifact(s), ${input.branchObservationIds.length} branch observation(s)`;
+  const branchFinalText =
+    missingBranchFinalCount === 0
+      ? `${branchFinalCount} BranchFinal record(s)`
+      : `${branchFinalCount} BranchFinal record(s), ${missingBranchFinalCount} missing for completed branches`;
   const signalText =
     conflictSignalCount === 0
       ? "no explicit contradiction/source-mismatch signals"
       : `${conflictSignalCount} contradiction/source-mismatch signal(s)`;
-  return `Reducer synthesized ${statusText}; ${artifactText}; ${signalText}.`;
+  return `Reducer synthesized ${statusText}; ${artifactText}; ${branchFinalText}; ${signalText}.`;
 }
 
 function buildReductionRecommendations(input: {
@@ -286,8 +305,18 @@ function buildReductionRecommendations(input: {
   artifactIds: string[];
   branchObservationIds: string[];
   conflictSignalCount: number;
+  missingBranchFinalCount: number;
+  runtimeObservationFallbackCount: number;
 }) {
   const recommendations: string[] = [];
+  if (input.missingBranchFinalCount > 0) {
+    recommendations.push(
+      `Mark reduction failed_verification until ${input.missingBranchFinalCount} completed branch(es) materialize BranchFinal records; runtime observations are diagnostic only.`,
+    );
+  }
+  if (input.runtimeObservationFallbackCount > 0) {
+    recommendations.push("Do not treat runtime_observation fallback branch items as user-facing deliverable content.");
+  }
   if (input.branchObservationIds.length < input.branchCount) {
     recommendations.push("Do not finalize high-confidence conclusions until every branch has a persisted Observation.");
   }

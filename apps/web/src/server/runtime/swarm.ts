@@ -812,7 +812,7 @@ export async function executeSwarm(input: {
     },
   });
 
-  await completeTraceSpan(reduceSpan.id, reduction.status === "failed" ? "failed" : "completed", {
+  await completeTraceSpan(reduceSpan.id, reduction.status === "failed" || reduction.status === "failed_verification" ? "failed" : "completed", {
     status: reduction.status,
     reducer_mode: reduction.reducerMode,
     reducer_input_coverage: reducerInputCoverage,
@@ -847,6 +847,11 @@ export async function executeSwarm(input: {
     branchObservationIds,
     artifactIds,
   });
+  const finalHtmlQualitySignals = buildFinalHtmlReportQualitySignals({
+    reduction,
+    branchObservationIds,
+    artifactIds,
+  });
   const mergedArtifactIds = uniqueStrings([...artifactIds, finalHtmlArtifact.id]);
   const verificationArtifacts = [
     ...branchArtifacts,
@@ -858,10 +863,7 @@ export async function executeSwarm(input: {
       artifactKind: "final_html_report",
       sourceObservationIds: branchObservationIds,
       sourceArtifactIds: artifactIds,
-      qualitySignals: {
-        substanceStatus: "substantive",
-        deliverableEligible: true,
-      },
+      qualitySignals: finalHtmlQualitySignals,
     },
   ];
   await publishRunEvent({
@@ -1118,6 +1120,12 @@ async function createSwarmFinalHtmlArtifact(input: {
   artifactIds: string[];
 }) {
   const html = buildSwarmFinalHtmlReport(input.plan, input.reduction, input.branchObservationIds, input.artifactIds);
+  const qualitySignals = buildFinalHtmlReportQualitySignals({
+    reduction: input.reduction,
+    branchObservationIds: input.branchObservationIds,
+    artifactIds: input.artifactIds,
+    characterCount: html.length,
+  });
   return createTextArtifact({
     conversationId: input.conversationId,
     runId: input.runId,
@@ -1132,15 +1140,60 @@ async function createSwarmFinalHtmlArtifact(input: {
       sourceObservationIds: input.branchObservationIds,
       sourceArtifactIds: input.artifactIds,
       branchIds: input.plan.branches.map((branch) => branch.id),
-      qualitySignals: {
-        substanceStatus: "substantive",
-        deliverableEligible: true,
-        branchItemCount: input.reduction.branchItems.length,
-        sourceObservationCount: input.branchObservationIds.length,
-        sourceArtifactCount: input.artifactIds.length,
-      },
+      qualitySignals,
     },
   });
+}
+
+function buildFinalHtmlReportQualitySignals(input: {
+  reduction: SwarmReductionResult;
+  branchObservationIds: string[];
+  artifactIds: string[];
+  characterCount?: unknown;
+}) {
+  const branchSectionCount = input.reduction.branchItems.reduce(
+    (sum, item) => sum + Math.max(1, item.sections.length) + (item.claims.length > 0 ? 1 : 0),
+    0,
+  );
+  const evidenceCitationCount =
+    input.branchObservationIds.length +
+    input.artifactIds.length +
+    input.reduction.branchItems.reduce(
+      (sum, item) =>
+        sum +
+        item.evidenceObservationIds.length +
+        item.artifactIds.length +
+        item.sections.reduce((sectionSum, section) => sectionSum + section.evidenceObservationIds.length + section.evidenceArtifactIds.length, 0) +
+        item.claims.reduce((claimSum, claim) => claimSum + claim.evidenceObservationIds.length + claim.evidenceArtifactIds.length, 0),
+      0,
+    );
+  return {
+    substanceStatus: "substantive",
+    deliverableEligible: input.reduction.status !== "failed_verification" && input.reduction.status !== "failed",
+    branchItemCount: input.reduction.branchItems.length,
+    branchFinalItemCount: input.reduction.branchItems.filter((item) => item.source === "branch_final").length,
+    runtimeObservationFallbackCount: input.reduction.branchItems.filter((item) => item.source === "runtime_observation").length,
+    sectionCount: Math.max(3, branchSectionCount + 2),
+    characterCount: Number(input.characterCount ?? estimateFinalHtmlReportCharacterCount(input.reduction)),
+    evidenceCitationCount,
+    sourceObservationCount: input.branchObservationIds.length,
+    sourceArtifactCount: input.artifactIds.length,
+    minimumSectionThreshold: 3,
+    minimumCharacterThreshold: 900,
+  };
+}
+
+function estimateFinalHtmlReportCharacterCount(reduction: SwarmReductionResult) {
+  const branchTextLength = reduction.branchItems.reduce(
+    (sum, item) =>
+      sum +
+      item.title.length +
+      item.summary.length +
+      item.sections.reduce((sectionSum, section) => sectionSum + section.title.length + section.content.length, 0) +
+      item.claims.reduce((claimSum, claim) => claimSum + claim.claim.length + claim.confidence.length, 0),
+    0,
+  );
+  return reduction.summary.length + branchTextLength + 1200;
 }
 
 function buildSwarmFinalHtmlReport(

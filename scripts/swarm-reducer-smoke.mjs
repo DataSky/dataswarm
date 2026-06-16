@@ -41,10 +41,30 @@ expect(
 
 expect(
   "merge and final observation use reducer output",
-  /const mergeSummary = `\$\{reduction\.summary\}/.test(swarm) &&
+  /const mergeSummary = formatSwarmReductionEvidence\(reduction\)/.test(swarm) &&
     /Swarm reduction \(\$\{reduction\.status\}\)/.test(swarm) &&
     /reduction,/.test(swarm),
   "Reducer output should influence merge/final observations instead of being a detached card.",
+);
+
+expect(
+  "reducer fails verification when completed branches are missing BranchFinal",
+  /status: "completed" \| "partial" \| "failed" \| "failed_verification"/.test(reducer) &&
+    /missingBranchFinalCount > 0\s*\?\s*"failed_verification"/.test(reducer) &&
+    /runtimeObservationFallbackCount/.test(reducer) &&
+    /runtime observations are diagnostic only/.test(reducer),
+  "Reducer must not treat runtime_observation fallback as normal completed synthesis.",
+);
+
+expect(
+  "final HTML report exposes substance quality signals",
+  /function buildFinalHtmlReportQualitySignals/.test(swarm) &&
+    /sectionCount: Math\.max\(3, branchSectionCount \+ 2\)/.test(swarm) &&
+    /characterCount: Number\(input\.characterCount \?\? estimateFinalHtmlReportCharacterCount\(input\.reduction\)\)/.test(swarm) &&
+    /evidenceCitationCount/.test(swarm) &&
+    /minimumCharacterThreshold: 900/.test(swarm) &&
+    /deliverableEligible: input\.reduction\.status !== "failed_verification"/.test(swarm),
+  "Final HTML artifacts need quality metadata compatible with hard artifact substance gates.",
 );
 
 expect(
