@@ -590,6 +590,7 @@ async function verifyCallbackReachability(baseUrl) {
     return { ok: false, baseUrl, details: [], reason: "missing callback base URL" };
   }
 
+  const healthBaseUrl = deriveServiceBaseUrl(baseUrl);
   const checks = [
     { path: "/api/internal/sandbox/health", requiredStatus: "ready", requireStatusBody: true },
     { path: "/api/system/snapshot", requiredStatus: "available", requireStatusBody: false },
@@ -597,7 +598,7 @@ async function verifyCallbackReachability(baseUrl) {
   const details = [];
 
   for (const check of checks) {
-    const fullUrl = `${baseUrl.replace(/\/$/, "")}${check.path}`;
+    const fullUrl = `${healthBaseUrl.replace(/\/$/, "")}${check.path}`;
     const result = await probeUrl(fullUrl, { timeoutMs: tunnelReachabilityTimeoutMs / checks.length });
     const next = { path: check.path, status: result.status, ok: result.ok };
     if (!result.ok) {
@@ -628,6 +629,21 @@ async function verifyCallbackReachability(baseUrl) {
   }
 
   return { ok: true, baseUrl, details };
+}
+
+function deriveServiceBaseUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    const knownToolPaths = ["/api/internal/sandbox/tool-proxy", "/api/internal/capabilities/invoke"];
+    for (const suffix of knownToolPaths) {
+      if (parsed.pathname === suffix || parsed.pathname.startsWith(`${suffix}/`)) {
+        return `${parsed.origin}${parsed.pathname.slice(0, -suffix.length) || ""}`.replace(/\/$/, "");
+      }
+    }
+    return rawUrl.replace(/\/$/, "");
+  } catch {
+    return rawUrl.replace(/\/$/, "");
+  }
 }
 
 async function probeUrl(url, options = {}) {
