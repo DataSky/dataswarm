@@ -9,6 +9,13 @@
   - 这是明确的可重现外部可达性阻塞，不是内部模型 action parser/repair/contract 的直接退化。
 - 结论：在当前域名告警态下，继续把 `real E2B parent-proxy + complex benchmark` 标记为“待域名恢复后可复验”；本地与非 parent-proxy 的关键静态及工具闭环仍维持通过。
 
+## 2026-06-16 Progress Note: current validation pause due runtime not running + public callback 530
+
+- 当前本机未检测到应用服务运行（`curl http://127.0.0.1:3000` 连接失败）。
+- 命名域名健康探测持续返回 `HTTP/2 530` 且响应体非预期 JSON（`error code: 1033`），未通过回调可达性门禁。
+- 受限于上述两点，`smoke:e2b-orchestrator-v3-parent-proxy` 与 `smoke:e2b-branch-complex-benchmark` 仍无法进入真实 `reduce/verify` 闭环验证。
+- 下一步只要满足：先恢复本地服务监听（3000）再恢复 `dataswarm-dev.metad.ai` 回调可达，即可在不改核心代码前提下继续跑一次完整真实复杂基准，并采集 `run_id`、tool_call/Observation/RunEvent 及 artifact 闭环证据。
+
 ## 2026-06-16 Progress Note: parent-proxy command-channel hard-stop across providers
 
 - 尝试不同 tunnel 命令后，`DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY_TUNNEL_COMMAND` 均未打通：
