@@ -1,3 +1,13 @@
+## 2026-06-17 Progress Note: sandbox parse repair events for V3 ReAct actions
+
+- Hardened `sandbox/agent/dataswarm_sandbox_agent.py` so V3 model action parse failures now emit the same auditable repair lifecycle as validation failures:
+  - `sandbox.agent.action_repair_started`
+  - `sandbox.agent.action_repair_succeeded`
+  - `sandbox.agent.action_repair_failed`
+- Parse repair events now include `rawAction`, `parsedAction`, `validationResult`, `repairAttempt`, `maxRepairAttempts`, `finalAction`, and `actionSource`, closing the previous gap where malformed model JSON could be repaired without a replayable trace.
+- Updated `scripts/sandbox-agent-v3-real-action-smoke.mjs` to force one malformed model action, require repair lifecycle events, and assert `repairedActionCount >= 1` while keeping deterministic fallback at zero.
+- This advances the V4.1 action schema / parser / repair / retry requirement without claiming live E2B completion.
+
 ## 2026-06-17 Progress Note: diagnostics model-call terminal replay alignment
 
 - Tightened conversation diagnostics model-call replay semantics to match `swarm.verify`: `sandboxModelEventCount` and replayability now count only terminal `sandbox.agent.model_call_completed` / `sandbox.agent.model_call_failed` events.

@@ -2619,8 +2619,65 @@ def propose_v3_action(
             action = normalize_agent_action(extract_json_object(raw_content))
             repaired = False
             if not action:
-                action = repair_action_with_model(job, raw_content, "Model output did not parse as a SandboxAgentAction JSON object.")
-                repaired = bool(action)
+                action_id = f"sba_v3_{step:02d}_parse"
+                parse_error = "Model output did not parse as a SandboxAgentAction JSON object."
+                emit(
+                    "sandbox.agent.action_repair_started",
+                    "Sandbox model action parse repair started.",
+                    {
+                        "branchId": as_text(job.get("branchId")),
+                        "step": step,
+                        "actionId": action_id,
+                        "repairAttempt": 1,
+                        "maxRepairAttempts": 2,
+                        "rawAction": {"contentPreview": raw_content[:4000]},
+                        "parsedAction": None,
+                        "validationResult": {"status": "failed", "error": parse_error},
+                        "actionSource": "real_model",
+                    },
+                )
+                repaired_candidate = repair_action_with_model(job, raw_content, parse_error, 1)
+                repaired_validation_error = (
+                    validate_v3_action(repaired_candidate, job, tool_call_count, max_tool_calls, observations, artifacts)
+                    if repaired_candidate
+                    else "repair did not return a parseable action"
+                )
+                if repaired_candidate and not repaired_validation_error:
+                    action = repaired_candidate
+                    repaired = True
+                    emit(
+                        "sandbox.agent.action_repair_succeeded",
+                        "Sandbox model action parse repair satisfied validation.",
+                        {
+                            "branchId": as_text(job.get("branchId")),
+                            "step": step,
+                            "actionId": action_id,
+                            "repairAttempt": 1,
+                            "maxRepairAttempts": 2,
+                            "rawAction": {"contentPreview": raw_content[:4000]},
+                            "parsedAction": redact_action(repaired_candidate),
+                            "validationResult": {"status": "passed"},
+                            "finalAction": redact_action(repaired_candidate),
+                            "actionSource": "real_model",
+                        },
+                    )
+                else:
+                    emit(
+                        "sandbox.agent.action_repair_failed",
+                        "Sandbox model action parse repair did not satisfy validation.",
+                        {
+                            "branchId": as_text(job.get("branchId")),
+                            "step": step,
+                            "actionId": action_id,
+                            "repairAttempt": 1,
+                            "maxRepairAttempts": 2,
+                            "rawAction": {"contentPreview": raw_content[:4000]},
+                            "parsedAction": redact_action(repaired_candidate) if repaired_candidate else None,
+                            "validationResult": {"status": "failed", "error": repaired_validation_error},
+                            "finalAction": None,
+                            "actionSource": "real_model",
+                        },
+                    )
             if action:
                 return {
                     "source": "real_model",
@@ -2630,6 +2687,24 @@ def propose_v3_action(
                     "usage": result.get("usage") if isinstance(result.get("usage"), dict) else {},
                     "repaired": repaired,
                 }
+            emit(
+                "sandbox.agent.action_repair_started",
+                "Sandbox model action retry repair started.",
+                {
+                    "branchId": as_text(job.get("branchId")),
+                    "step": step,
+                    "actionId": f"sba_v3_{step:02d}_parse",
+                    "repairAttempt": 2,
+                    "maxRepairAttempts": 2,
+                    "rawAction": {"contentPreview": raw_content[:4000]},
+                    "parsedAction": None,
+                    "validationResult": {
+                        "status": "failed",
+                        "error": "The previous model response could not be parsed as one valid SandboxAgentAction JSON object.",
+                    },
+                    "actionSource": "real_model",
+                },
+            )
             retry = retry_v3_action_with_model(
                 job,
                 action_prompt,
@@ -2637,11 +2712,80 @@ def propose_v3_action(
                 "The previous model response could not be parsed as one valid SandboxAgentAction JSON object.",
             )
             if retry.get("action"):
-                return retry
+                retry_validation_error = validate_v3_action(
+                    retry.get("action"),
+                    job,
+                    tool_call_count,
+                    max_tool_calls,
+                    observations,
+                    artifacts,
+                )
+                if retry_validation_error:
+                    emit(
+                        "sandbox.agent.action_repair_failed",
+                        "Sandbox model action retry repair did not satisfy validation.",
+                        {
+                            "branchId": as_text(job.get("branchId")),
+                            "step": step,
+                            "actionId": f"sba_v3_{step:02d}_parse",
+                            "repairAttempt": 2,
+                            "maxRepairAttempts": 2,
+                            "rawAction": {"contentPreview": raw_content[:4000]},
+                            "parsedAction": redact_action(retry.get("action")),
+                            "validationResult": {"status": "failed", "error": retry_validation_error},
+                            "finalAction": None,
+                            "actionSource": "real_model",
+                        },
+                    )
+                else:
+                    emit(
+                        "sandbox.agent.action_repair_succeeded",
+                        "Sandbox model action retry repair satisfied validation.",
+                        {
+                            "branchId": as_text(job.get("branchId")),
+                            "step": step,
+                            "actionId": f"sba_v3_{step:02d}_parse",
+                            "repairAttempt": 2,
+                            "maxRepairAttempts": 2,
+                            "rawAction": {"contentPreview": raw_content[:4000]},
+                            "parsedAction": redact_action(retry.get("action")),
+                            "validationResult": {"status": "passed"},
+                            "finalAction": redact_action(retry.get("action")),
+                            "actionSource": "real_model",
+                        },
+                    )
+                    retry["repaired"] = True
+                    return retry
+            emit(
+                "sandbox.agent.action_repair_failed",
+                "Sandbox model action retry repair did not return a parseable action.",
+                {
+                    "branchId": as_text(job.get("branchId")),
+                    "step": step,
+                    "actionId": f"sba_v3_{step:02d}_parse",
+                    "repairAttempt": 2,
+                    "maxRepairAttempts": 2,
+                    "rawAction": {"contentPreview": raw_content[:4000]},
+                    "parsedAction": None,
+                    "validationResult": {
+                        "status": "failed",
+                        "error": "retry did not return a parseable action",
+                    },
+                    "finalAction": None,
+                    "actionSource": "real_model",
+                },
+            )
             emit(
                 "sandbox.agent.action_parse_failed",
                 "Sandbox model action output could not be parsed; deterministic fallback will be used.",
-                {"step": step, "contentPreview": raw_content[:600]},
+                {
+                    "step": step,
+                    "contentPreview": raw_content[:600],
+                    "rawAction": {"contentPreview": raw_content[:4000]},
+                    "parsedAction": None,
+                    "validationResult": {"status": "failed", "error": "action_parse_failed"},
+                    "finalAction": None,
+                },
             )
             fallback_reason = "action_parse_failed"
         else:

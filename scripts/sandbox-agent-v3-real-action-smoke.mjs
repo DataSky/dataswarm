@@ -26,7 +26,7 @@ const actions = [
   },
 ];
 
-const serverState = { requestCount: 0, requests: [] };
+const serverState = { requestCount: 0, nextActionIndex: 0, lastActionIndex: 0, requests: [] };
 const server = http.createServer(async (request, response) => {
   if (request.method !== "POST" || request.url !== "/chat/completions") {
     response.writeHead(404, { "content-type": "application/json" });
@@ -48,9 +48,13 @@ const server = http.createServer(async (request, response) => {
     maxTokens: body.max_tokens,
   });
 
-  const actionIndex = Math.min(serverState.requestCount - 1, actions.length - 1);
+  const isRepairRequest = rawBody.includes("invalidOutput") || rawBody.includes("retryReason");
+  const actionIndex = isRepairRequest
+    ? serverState.lastActionIndex
+    : Math.min(serverState.nextActionIndex++, actions.length - 1);
+  serverState.lastActionIndex = actionIndex;
   const action = actions[actionIndex];
-  const content = formatActionContent(action, actionIndex);
+  const content = isRepairRequest ? JSON.stringify(action) : formatActionContent(action, actionIndex);
   const usage = {
     prompt_tokens: JSON.stringify(body.messages ?? []).length,
     completion_tokens: content.length,
@@ -100,6 +104,7 @@ try {
     toolCatalog: [
       { name: "web.search", capability: "web_search", adapterMode: "parent" },
       { name: "artifact.create", capability: "artifact_create", adapterMode: "parent" },
+      { name: "run_python", capability: "visualization", adapterMode: "local" },
     ],
     skillManifests: [
       {
@@ -113,7 +118,7 @@ try {
       mode: "mock",
       url: "",
       proxySessionToken: "mock-token",
-      allowedTools: ["web.search", "artifact.create"],
+      allowedTools: ["web.search", "artifact.create", "run_python"],
       authMode: "signed_token",
     },
     sandboxModel: {
@@ -164,6 +169,12 @@ try {
     events.filter((event) => event.type === "sandbox.agent.model_call_completed" && event.payload?.purpose === "next_action").length >= 6,
   );
   expect(
+    "sandbox emitted parse repair lifecycle events",
+    events.some((event) => event.type === "sandbox.agent.action_repair_started" && event.payload?.repairAttempt === 1) &&
+      events.some((event) => event.type === "sandbox.agent.action_repair_succeeded" && event.payload?.repairAttempt === 1),
+    JSON.stringify(events.filter((event) => event.type.startsWith("sandbox.agent.action_repair_")).map((event) => event.payload)),
+  );
+  expect(
     "sandbox recorded real_model action source",
     events.filter((event) => event.type === "sandbox.agent.action.proposed" && event.payload?.actionSource === "real_model").length >= 6,
   );
@@ -187,6 +198,11 @@ try {
     "sandbox v3 did not use deterministic fallback",
     result?.qualitySignals?.fallbackActionCount === 0,
     result?.qualitySignals?.fallbackActionCount === 0 ? "" : JSON.stringify(result?.qualitySignals),
+  );
+  expect(
+    "sandbox v3 counted repaired model actions",
+    result?.qualitySignals?.repairedActionCount >= 1,
+    result?.qualitySignals?.repairedActionCount >= 1 ? "" : JSON.stringify(result?.qualitySignals),
   );
   expect(
     "sandbox v3 returned recoverable image artifact manifest",
@@ -232,7 +248,7 @@ function formatActionContent(action, index) {
     });
   }
   if (index === 3) {
-    return `${JSON.stringify({ action }).replace(/}$/, ",}")}`;
+    return "I cannot produce JSON for this step yet. Please repair this into a run_python SandboxAgentAction.";
   }
   if (index === 4) {
     return JSON.stringify({ response: action });
