@@ -6,6 +6,7 @@ V4.1 turns the V4 E2B ReAct swarm from a runnable branch system into an evidence
 
 - Latest continuation note (2026-06-16): strengthened `trace.query` active-context fallback in `apps/web/src/server/tools/registry.ts` so missing/alias `conversation_id` can resolve to the active conversation automatically instead of failing as invalid target. This is tracked in
   `IMPLEMENTATION_STATUS.md` under "trace.query active-context fallback hardening".
+- 进一步落地：`scripts/sandbox-tool-proxy-e2e-smoke.mjs` 已加入 `trace.query` 的 parent proxy alias 回归（`conversation_id: "current"`），并要求回退事件元数据记录 `usedActiveConversationFallback`，用于 `conversationId` 可追溯性验收。
 
 ## Current Baseline
 

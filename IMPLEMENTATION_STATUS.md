@@ -23,6 +23,13 @@
 - 同时补充 `conversation_id` 别名当前值的回退路径保持一致：`current`/`this`/`active`/`current_conversation`/`current-run`/`current_run` 在可用时仍映射到上层 active conversation。
 - 该修复是为“trace.query 输入未带会话参数就落库/diagnostics”这一类失败留痕问题提供直接的、可复用的修复路径。
 
+## 2026-06-16 Progress Note: trace.query current-alias proxy smoke
+
+- 在 `scripts/sandbox-tool-proxy-e2e-smoke.mjs` 增加 `trace.query` 回归场景：
+  - 增补一个 action 使用 `conversation_id: "current"` 走 parent tool proxy；
+  - 新增同类检查验证 `trace.query` 观察记录中 `metadata.trace_query` 已标记 `usedActiveConversationFallback: true` 且 `resolvedConversationId` 为当前会话。
+- 同一文件中仍保留原始基线 `conversation_id` 与 capability-plane 调用校验，确保新增场景不引入回归。
+
 ## 2026-06-16 Progress Note: local verification slice rerun
 
 - 本轮重新执行关键闭环检查，结果可追溯：

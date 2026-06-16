@@ -178,6 +178,18 @@ try {
     },
   });
 
+  const traceQueryCurrentResponse = await postProxy({
+    proxySessionToken: token,
+    runId,
+    branchId,
+    sandboxSessionId,
+    actionId: "sba_proxy_e2e_04b_trace_query_current",
+    toolName: "trace.query",
+    input: {
+      conversation_id: "current",
+    },
+  });
+
   const capabilityInvokeResponse = await postCapability({
     proxySessionToken: token,
     runId,
@@ -241,6 +253,22 @@ try {
       expectedEvidenceLevel: "real",
       expectedSummaryPattern: /Trace diagnostics completed/i,
       expectedExecutionMode: "real",
+    });
+    verifyToolProxyResponse({
+      db: verifyDb,
+      runId,
+      branchId,
+      sandboxSessionId,
+      actionId: "sba_proxy_e2e_04b_trace_query_current",
+      toolName: "trace.query",
+      proxyResponse: traceQueryCurrentResponse,
+      expectedEvidenceLevel: "real",
+      expectedSummaryPattern: /Trace diagnostics completed/i,
+      expectedExecutionMode: "real",
+      expectedTraceQueryMetadata: {
+        resolvedConversationId: conversationId,
+        usedActiveConversationFallback: true,
+      },
     });
     verifyToolProxyResponse({
       db: verifyDb,
@@ -403,6 +431,7 @@ function verifyToolProxyResponse({
   expectedEvidenceLevel,
   expectedSummaryPattern,
   expectedExecutionMode,
+  expectedTraceQueryMetadata,
 }) {
   expect(
     `${toolName} tool proxy route returns completed observation`,
@@ -484,6 +513,17 @@ function verifyToolProxyResponse({
       completedPayload?.execution_mode === expectedExecutionMode,
     JSON.stringify(completedPayload),
   );
+
+  if (expectedTraceQueryMetadata && toolName === "trace.query") {
+    const traceMetadata = parseJson(observation?.metadata_json, {});
+    const traceQuery = traceMetadata?.traceQuery ?? traceMetadata?.trace_query ?? {};
+    expect(
+      `${toolName} trace.query observation metadata resolves active conversation`,
+      traceQuery.resolvedConversationId === expectedTraceQueryMetadata.resolvedConversationId &&
+        traceQuery.usedActiveConversationFallback === expectedTraceQueryMetadata.usedActiveConversationFallback,
+      JSON.stringify(traceMetadata),
+    );
+  }
 }
 
 function cleanupSmokeRows() {
