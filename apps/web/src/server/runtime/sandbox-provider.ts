@@ -671,7 +671,17 @@ function e2bSandboxModelEnv() {
   };
 }
 
-function parseSandboxAgentOutput(text: string | undefined, stdout: string[]) {
+type ParsedSandboxAgentOutput = {
+  outputMarkdown: string;
+  outputSummary: string;
+  agentEvents: SandboxAgentEvent[];
+  qualitySignals?: Record<string, unknown>;
+  sandboxArtifacts?: Array<Record<string, unknown>>;
+  sandboxRuntime?: Record<string, unknown>;
+  branchFinal?: BranchFinal;
+};
+
+function parseSandboxAgentOutput(text: string | undefined, stdout: string[]): ParsedSandboxAgentOutput {
   const candidates = [text, ...stdout].filter((item): item is string => Boolean(item?.trim()));
   const parsedLines = candidates
     .flatMap((candidate) => candidate.split("\n"))
@@ -680,18 +690,75 @@ function parseSandboxAgentOutput(text: string | undefined, stdout: string[]) {
     .map((line) => parseJsonObject(line))
     .filter((item): item is Record<string, unknown> => Boolean(item));
   const agentEvents = parsedLines.filter(isSandboxAgentEvent);
-  const resultLine = [...parsedLines].reverse().find((item) => typeof item.outputMarkdown === "string");
+  const normalizeOutputMarkdown = (record: Record<string, unknown>) =>
+    typeof record.outputMarkdown === "string"
+      ? String(record.outputMarkdown)
+      : typeof record.output_markdown === "string"
+        ? String(record.output_markdown)
+        : typeof record.output === "string"
+          ? String(record.output)
+          : "";
+  const normalizeSummary = (record: Record<string, unknown>) =>
+    typeof record.outputSummary === "string"
+      ? String(record.outputSummary)
+      : typeof record.output_summary === "string"
+        ? String(record.output_summary)
+        : "";
+  const normalizeArtifacts = (record: Record<string, unknown>): Array<Record<string, unknown>> | undefined => {
+    if (Array.isArray(record.artifacts)) {
+      return record.artifacts.filter(isRecord);
+    }
+    const sandboxArtifacts = (record as { sandboxArtifacts?: unknown })?.sandboxArtifacts;
+    if (Array.isArray(sandboxArtifacts)) {
+      return sandboxArtifacts.filter(isRecord);
+    }
+    const artifactRecovery = (record as { artifact_recovery?: unknown })?.artifact_recovery;
+    if (Array.isArray(artifactRecovery)) {
+      return artifactRecovery.filter(isRecord);
+    }
+    return undefined;
+  };
+  const normalizeRuntime = (record: Record<string, unknown>): Record<string, unknown> | undefined => {
+    if (isRecord(record.runtime)) {
+      return record.runtime;
+    }
+    const sandboxRuntime = (record as { sandboxRuntime?: unknown })?.sandboxRuntime;
+    if (isRecord(sandboxRuntime)) {
+      return sandboxRuntime;
+    }
+    const runtimeMeta = (record as { runtime_meta?: unknown })?.runtime_meta;
+    if (isRecord(runtimeMeta)) {
+      return runtimeMeta;
+    }
+    return undefined;
+  };
+  const normalizeBranchFinal = (record: Record<string, unknown>) => {
+    const candidate =
+      record.branchFinal ??
+      record.branch_final ??
+      record.branchFinalPayload ??
+      (isRecord(record.output) ? (record.output as Record<string, unknown>).branchFinal : undefined) ??
+      (isRecord(record.output) ? (record.output as Record<string, unknown>).branch_final : undefined) ??
+      (isRecord((record as Record<string, unknown>).artifact_recovery)
+        ? ((record as Record<string, unknown>).artifact_recovery as Record<string, unknown>)?.branch_final
+        : undefined);
+    if (isRecord(candidate)) {
+      return candidate;
+    }
+    return undefined;
+  };
+
+  const resultLine = [...parsedLines].reverse().find((item) => normalizeOutputMarkdown(item));
   if (resultLine) {
+    const branchFinal = normalizeBranchFinal(resultLine);
     return {
-      outputMarkdown: String(resultLine.outputMarkdown),
-      outputSummary: typeof resultLine.outputSummary === "string" ? resultLine.outputSummary : "",
+      outputMarkdown: normalizeOutputMarkdown(resultLine),
+      outputSummary: normalizeSummary(resultLine),
       agentEvents,
       qualitySignals: isRecord(resultLine.qualitySignals) ? resultLine.qualitySignals : undefined,
-      sandboxArtifacts: Array.isArray(resultLine.artifacts)
-        ? resultLine.artifacts.filter(isRecord)
-        : undefined,
-      sandboxRuntime: isRecord(resultLine.runtime) ? resultLine.runtime : undefined,
-      branchFinal: isRecord(resultLine.branchFinal) ? (resultLine.branchFinal as BranchFinal) : undefined,
+      sandboxArtifacts: normalizeArtifacts(resultLine),
+      sandboxRuntime: normalizeRuntime(resultLine),
+      branchFinal: isRecord(branchFinal) ? (branchFinal as BranchFinal) : undefined,
     };
   }
 
@@ -699,14 +766,18 @@ function parseSandboxAgentOutput(text: string | undefined, stdout: string[]) {
     for (const line of candidate.split("\n").reverse()) {
       try {
         const parsed = JSON.parse(line) as { outputMarkdown?: unknown; outputSummary?: unknown };
-        if (typeof parsed.outputMarkdown === "string") {
+        const parsedRecord = parsed as Record<string, unknown>;
+        const outputMarkdown = normalizeOutputMarkdown(parsedRecord);
+        if (outputMarkdown) {
+          const branchFinal = normalizeBranchFinal(parsedRecord);
           return {
-            outputMarkdown: parsed.outputMarkdown,
-            outputSummary: typeof parsed.outputSummary === "string" ? parsed.outputSummary : "",
+            outputMarkdown,
+            outputSummary: normalizeSummary(parsedRecord),
             agentEvents,
             qualitySignals: undefined,
             sandboxArtifacts: undefined,
             sandboxRuntime: undefined,
+            branchFinal: isRecord(branchFinal) ? (branchFinal as BranchFinal) : undefined,
           };
         }
       } catch {

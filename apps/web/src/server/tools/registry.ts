@@ -431,9 +431,28 @@ async function executeTraceQueryAction(input: {
   if (!resolvedTarget.conversationId) {
     throw new Error("trace.query requires input.conversation_id, input.run_id, or input.trace_id");
   }
-  const requestedConversationId = stringValue(input.action.input.conversation_id ?? input.action.input.conversationId ?? input.action.input.id);
-  const requestedRunId = stringValue(input.action.input.run_id ?? input.action.input.runId);
-  const requestedTraceId = stringValue(input.action.input.trace_id ?? input.action.input.traceId);
+  const actionInput = input.action.input as Record<string, unknown>;
+  const queryScope = isRecord(actionInput.query)
+    ? (actionInput.query as Record<string, unknown>)
+    : isRecord(actionInput.scope)
+      ? (actionInput.scope as Record<string, unknown>)
+      : undefined;
+  const requestedConversationId = stringValue(
+    actionInput.conversation_id ??
+      actionInput.conversationId ??
+      actionInput.id ??
+      getTraceQueryValue(queryScope, "conversation_id", "conversationId", "id", "conversation-id"),
+  );
+  const requestedRunId = stringValue(
+    actionInput.run_id ??
+      actionInput.runId ??
+      getTraceQueryValue(queryScope, "run_id", "runId"),
+  );
+  const requestedTraceId = stringValue(
+    actionInput.trace_id ??
+      actionInput.traceId ??
+      getTraceQueryValue(queryScope, "trace_id", "traceId", "trace"),
+  );
 
   const toolCall = await createToolCall({
     runId: input.runId,
@@ -1088,6 +1107,7 @@ async function executeApprovalRequestAction(input: {
 }
 
 async function resolveTraceQueryTarget(input: Record<string, unknown>, context: TraceQueryContext = {}) {
+  const inputRecord = input as Record<string, unknown>;
   const normalizeCurrentId = (value: string | undefined, fallback: string | undefined) => {
     if (!value) return fallback;
     const normalized = value.trim().toLowerCase();
@@ -1095,19 +1115,43 @@ async function resolveTraceQueryTarget(input: Record<string, unknown>, context: 
       ? fallback
       : value;
   };
-  const conversationId = normalizeCurrentId(stringValue(input.conversation_id ?? input.conversationId ?? input.id), context.conversationId);
+  const queryScope = isRecord(inputRecord.query)
+    ? (inputRecord.query as Record<string, unknown>)
+    : isRecord(inputRecord.scope)
+      ? (inputRecord.scope as Record<string, unknown>)
+      : undefined;
+  const conversationId = normalizeCurrentId(
+    stringValue(
+      inputRecord.conversation_id ??
+        inputRecord.conversationId ??
+        inputRecord.id ??
+        getTraceQueryValue(queryScope, "conversation_id", "conversationId", "id"),
+    ),
+    context.conversationId,
+  );
   if (conversationId) {
     return { kind: "conversation_id", id: conversationId, conversationId };
   }
 
-  const runId = normalizeCurrentId(stringValue(input.run_id ?? input.runId), context.runId);
+  const runId = normalizeCurrentId(
+    stringValue(
+      inputRecord.run_id ??
+        inputRecord.runId ??
+        getTraceQueryValue(queryScope, "run_id", "runId"),
+    ),
+    context.runId,
+  );
   if (runId) {
     const db = await getDb();
     const row = db.prepare(`SELECT conversation_id FROM runs WHERE id = ?`).get(runId) as { conversation_id?: string } | undefined;
     return { kind: "run_id", id: runId, conversationId: row?.conversation_id ?? "" };
   }
 
-  const traceId = stringValue(input.trace_id ?? input.traceId);
+  const traceId = stringValue(
+    inputRecord.trace_id ??
+      inputRecord.traceId ??
+      getTraceQueryValue(queryScope, "trace_id", "traceId", "trace"),
+  );
   if (traceId) {
     const db = await getDb();
     const row = db
@@ -1124,6 +1168,17 @@ async function resolveTraceQueryTarget(input: Record<string, unknown>, context: 
   }
 
   return { kind: "unknown", id: "", conversationId: "" };
+}
+
+function getTraceQueryValue(input: Record<string, unknown> | undefined, ...keys: string[]) {
+  for (const key of keys) {
+    const value = input?.[key];
+    const normalized = stringValue(value);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return undefined;
 }
 
 function mockTavilySources(query: string): TavilySource[] {

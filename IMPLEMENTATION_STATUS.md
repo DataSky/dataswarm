@@ -4,6 +4,10 @@
 - Reworked fallback handling in the same smoke:
   - fallback actions are accepted only when explicitly degraded (`fallbackPolicyStatus` in `degraded|failed_verification|completed_degraded`) or `degradedExecution: true`;
   - increased default `maxToolCalls` to reduce tool budget exhaustion fallback noise.
+- Current follow-up:
+  - `parseSandboxAgentOutput` now accepts `output_markdown/outputSummary`, `branch_final`, and branch-final payload aliases from sandbox parent-agent outputs so branch final materialization can be recovered even when template/runtime key styles differ.
+  - `trace.query` now resolves `conversation_id`, `run_id`, or `trace_id` from nested `query` payloads (for example `{"query":{"scope":"conversation","conversation_id":"current"}}`) and supports alias fields with active-fallback conversion before repository lookup.
+  - `e2b-orchestrator-v3-real-action-e2e-smoke.mjs` now avoids hardcoded mock behavior by default; real tool calls are used unless `DATASWARM_E2B_ORCHESTRATOR_V3_MOCK_TOOLS=1` / `DATASWARM_E2B_ORCHESTRATOR_V3_MOCK_MODEL=1` is explicitly set.
 - Updated image artifact assertion to accept image manifest evidence with image MIME types (not only `contentBase64`) so modern artifact transport from `run_python` is considered.
 - `npm run smoke:e2b-v3-real-action` now returns an explicit actionable skip in current environment (no public E2B callback available), rather than passing with a mocked parent proxy signal.
 - Previous local validation state remains:

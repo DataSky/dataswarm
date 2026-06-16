@@ -37,6 +37,8 @@ This directly addresses the failure mode where an E2B sandbox tries to call `hos
 - Added explicit parser acceptance guidance for legacy-to-canonical action equivalences (e.g., `thought` -> `think`, `web.search` -> `call_tool` with `toolName=web.search`) to reduce invalid-action noise and improve repair-to-progress behavior.
 - Improved repair prompt action vocabulary so repaired outputs return canonical action names expected by V4.1 validation.
 - No live validation claim added in this slice; next step is verifying real-model repair/parse behavior under the smoke phase.
+- `trace.query` input normalization now accepts nested query payloads (for example `{"query":{"scope":"conversation","conversation_id":"current"}}`) and alias fields, preventing unresolved current-scope lookups from breaking capability-plane trace diagnostics.
+- `scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs` now defaults to real tool calls and requires explicit mock env flags for smoke overrides, preventing false "passed" signals when only local stubs are active.
 
 ## Runtime Contract
 

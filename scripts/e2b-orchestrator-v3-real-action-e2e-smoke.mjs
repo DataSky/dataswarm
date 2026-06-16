@@ -25,6 +25,8 @@ const autoTunnelMode = (process.env.DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY_A
 const tunnelCommand = (process.env.DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY_TUNNEL_COMMAND ?? "").trim();
 const sandboxMaxSteps = complexBenchmarkMode ? "10" : "6";
 const sandboxMaxToolCalls = complexBenchmarkMode ? "6" : "4";
+const forceMockTools = (process.env.DATASWARM_E2B_ORCHESTRATOR_V3_MOCK_TOOLS ?? "0") === "1";
+const forceMockModel = (process.env.DATASWARM_E2B_ORCHESTRATOR_V3_MOCK_MODEL ?? "0") === "1";
 let publicBaseUrl = process.env.DATASWARM_PUBLIC_BASE_URL || "";
 let parentProxyUrl = process.env.DATASWARM_SANDBOX_TOOL_PROXY_URL || publicBaseUrl || "";
 const toolProxyMode = parentProxyMode ? "parent" : "mock";
@@ -81,8 +83,8 @@ try {
       DATASWARM_DATA_DIR: "../../data",
       DATASWARM_E2B_TEMPLATE_VERIFICATION_RECEIPT: path.relative(path.join(root, "apps", "web"), templateReceiptPath),
       DATASWARM_E2B_TIMEOUT_MS: process.env.DATASWARM_E2B_TIMEOUT_MS ?? "180000",
-      DATASWARM_MOCK_MODEL: "1",
-      DATASWARM_MOCK_TOOLS: "1",
+      DATASWARM_MOCK_MODEL: forceMockModel ? "1" : "0",
+      DATASWARM_MOCK_TOOLS: forceMockTools ? "1" : "0",
       DATASWARM_SANDBOX_AGENT_ACTION_MAX_TOKENS: process.env.DATASWARM_SANDBOX_AGENT_ACTION_MAX_TOKENS ?? "900",
       DATASWARM_SANDBOX_AGENT_JSON_MODE: "1",
       DATASWARM_SANDBOX_AGENT_MAX_STEPS: sandboxMaxSteps,
@@ -101,8 +103,8 @@ try {
       DATASWARM_PUBLIC_BASE_URL: publicBaseUrl || baseUrl,
       DATASWARM_PUBLIC_BASE_URL_FILE: parentProxyMode ? tunnelUrlFile : "",
       DATASWARM_SWARM_MAX_CONCURRENCY: "2",
-      DATASWARM_SWARM_REVIEW_MODE: "mock",
-      DATASWARM_WEB_SEARCH_PROVIDER: "mock",
+      DATASWARM_SWARM_REVIEW_MODE: process.env.DATASWARM_SWARM_REVIEW_MODE || "disabled",
+      DATASWARM_WEB_SEARCH_PROVIDER: process.env.DATASWARM_WEB_SEARCH_PROVIDER || (forceMockTools ? "mock" : "tavily"),
       DATASWARM_WORKSPACE_ROOT: "../..",
     },
     stdio: ["ignore", "pipe", "pipe"],
