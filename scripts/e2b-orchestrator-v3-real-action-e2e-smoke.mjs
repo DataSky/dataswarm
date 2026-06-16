@@ -27,6 +27,7 @@ const sandboxMaxSteps = complexBenchmarkMode ? "10" : "6";
 const sandboxMaxToolCalls = complexBenchmarkMode ? "6" : "4";
 const forceMockTools = (process.env.DATASWARM_E2B_ORCHESTRATOR_V3_MOCK_TOOLS ?? "0") === "1";
 const forceMockModel = (process.env.DATASWARM_E2B_ORCHESTRATOR_V3_MOCK_MODEL ?? "0") === "1";
+const tunnelReachabilityTimeoutMs = Number(process.env.DATASWARM_E2B_ORCHESTRATOR_V3_TUNNEL_REACHABILITY_MS ?? 18_000);
 let publicBaseUrl = process.env.DATASWARM_PUBLIC_BASE_URL || "";
 let parentProxyUrl = process.env.DATASWARM_SANDBOX_TOOL_PROXY_URL || publicBaseUrl || "";
 const toolProxyMode = parentProxyMode ? "parent" : "mock";
@@ -122,6 +123,11 @@ try {
     mkdirSync(path.dirname(tunnelUrlFile), { recursive: true });
     writeFileSync(tunnelUrlFile, parentProxyUrl, "utf8");
     expect("localtunnel exposes parent proxy URL for live E2B", /^https:\/\//.test(parentProxyUrl), parentProxyUrl);
+  }
+
+  if (parentProxyMode) {
+    const proxyReachability = await verifyCallbackReachability(parentProxyUrl);
+    expect("parent proxy callback is externally reachable and exposes sandbox health", proxyReachability.ok, JSON.stringify(proxyReachability));
   }
 
   const snapshot = await fetch(`${baseUrl}/api/system/snapshot`).then((response) => response.json());
@@ -511,7 +517,11 @@ async function startTunnelCommand(command) {
     const text = output.join("\n");
     const url = extractTunnelUrl(text);
     if (url) {
-      return { process: child, url };
+      const reachability = await verifyCallbackReachability(url);
+      if (reachability.ok) {
+        return { process: child, url };
+      }
+      output.push(`callback reachability check failed for ${url}: ${JSON.stringify(reachability)}`);
     }
     if (child.exitCode !== null && child.exitCode !== undefined) {
       break;
@@ -573,6 +583,77 @@ function extractTunnelUrl(text) {
       return true;
     }) ?? ""
   );
+}
+
+async function verifyCallbackReachability(baseUrl) {
+  if (!baseUrl) {
+    return { ok: false, baseUrl, details: [], reason: "missing callback base URL" };
+  }
+
+  const checks = [
+    { path: "/api/internal/sandbox/health", requiredStatus: "ready", requireStatusBody: true },
+    { path: "/api/system/snapshot", requiredStatus: "available", requireStatusBody: false },
+  ];
+  const details = [];
+
+  for (const check of checks) {
+    const fullUrl = `${baseUrl.replace(/\/$/, "")}${check.path}`;
+    const result = await probeUrl(fullUrl, { timeoutMs: tunnelReachabilityTimeoutMs / checks.length });
+    const next = { path: check.path, status: result.status, ok: result.ok };
+    if (!result.ok) {
+      details.push({ ...next, reason: result.body?.slice(0, 200) ?? result.statusText ?? "unreachable" });
+      return { ok: false, baseUrl, details };
+    }
+
+    if (check.requireStatusBody) {
+      try {
+        const payload = JSON.parse(result.body || "{}");
+        const passes = payload?.status === check.requiredStatus;
+        details.push({ ...next, bodyStatus: payload?.status ?? null, parsed: true });
+        if (!passes) {
+          return {
+            ok: false,
+            baseUrl,
+            details,
+            reason: `health status mismatch for ${check.path}: ${payload?.status ?? "unknown"}`,
+          };
+        }
+      } catch {
+        details.push({ ...next, parsed: false, reason: "health body invalid JSON" });
+        return { ok: false, baseUrl, details };
+      }
+    } else {
+      details.push(next);
+    }
+  }
+
+  return { ok: true, baseUrl, details };
+}
+
+async function probeUrl(url, options = {}) {
+  const timeoutMs = Number(options.timeoutMs ?? 5000);
+  try {
+    const response = await Promise.race([
+      fetch(url, { method: "GET", cache: "no-store" }),
+      delay(timeoutMs).then(() => {
+        throw new Error(`callback probe timeout (${timeoutMs}ms)`);
+      }),
+    ]);
+    const body = await response.text();
+    return {
+      ok: response.status >= 200 && response.status < 300,
+      status: response.status,
+      statusText: response.statusText,
+      body: body.slice(0, 1200),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      statusText: "error",
+      body: String(error?.message ?? error),
+    };
+  }
 }
 
 function stripAnsi(value) {

@@ -1,3 +1,13 @@
+## 2026-06-16 Progress Note: parent callback reachability hard-fail gates
+
+- 在 `scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs` 增加 `parent proxy` 回调地址可达性验证：
+  - 运行前通过 `/api/internal/sandbox/health` 与 `/api/system/snapshot` 检查回调端点是否真实可达、健康；
+  - 仅接受 `sandbox/health` 返回 `status: ready` 的回调入口，并在启动链路中以 `SKIP/FAIL` 强制阻断不可达端点。
+- 在 `scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs` 的 custom tunnel 命令中加入 reachability 轮询，避免提取 `cloudflare/docs` 或 `api/*` 误链。
+- 在 `scripts/dev-real-cloudflare-tunnel.mjs` 增加 Cloudflare 隧道就绪健康探测（`/api/internal/sandbox/health` + `/api/system/snapshot`），并在启动后立即失败快速关闭；
+  - 目标是避免“服务看似启动但 callback 不可达”导致的 parent-proxy 伪成功体验。
+- 这一步是 Phase 6/7 真实 E2B 验收前置门禁：只有回调可达时才允许继续 parent-proxy / complex benchmark 进程。
+
 ## 2026-06-16 Progress Note: e2b-v3-real-action smoke now hard-fails on non-reachable proxy path
 
 - `scripts/e2b-sandbox-v3-real-action-smoke.mjs` now rejects local-only/proxy-only URLs (`localhost`, `127.0.0.1`, `host.docker.internal`, non-HTTPS) and exits as SKIP with an explicit message unless an HTTPS public callback URL is configured.

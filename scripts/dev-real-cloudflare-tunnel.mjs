@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const webDir = resolve(repoRoot, "apps", "web");
@@ -11,6 +12,7 @@ const tunnelName = process.env.DATASWARM_CLOUDFLARE_TUNNEL_NAME || "dataswarm-de
 const publicBaseUrl =
   process.env.DATASWARM_PUBLIC_BASE_URL || "https://dataswarm-dev.metad.ai";
 const modelName = process.env.DATASWARM_SANDBOX_AGENT_MODEL_NAME || "deepseek-v4-flash";
+const tunnelReadinessTimeoutMs = Number(process.env.DATASWARM_CLOUDFLARE_TUNNEL_READINESS_TIMEOUT_MS ?? 45_000);
 
 const forbiddenMockEnv = [
   ["DATASWARM_ALLOW_EXPLICIT_MOCK", "1"],
@@ -132,6 +134,10 @@ function startNextDev() {
     env: childEnv,
     stdio: "inherit",
   });
+  waitForTunnelReadiness(childEnv.DATASWARM_PUBLIC_BASE_URL).catch((error) => {
+    log(`public tunnel readiness check failed: ${error.message}`);
+    shutdown(1);
+  });
   nextDev.on("exit", (code, signal) => {
     if (!shuttingDown) {
       log(`next dev exited with code=${code ?? "null"} signal=${signal ?? "null"}`);
@@ -146,6 +152,56 @@ function terminate(child, signal = "SIGTERM") {
     child.kill(signal);
   } catch {
     // Best-effort shutdown.
+  }
+}
+
+async function waitForTunnelReadiness(baseUrl) {
+  const normalizedBase = baseUrl.replace(/\/$/, "");
+  const deadline = Date.now() + tunnelReadinessTimeoutMs;
+  let lastState = "initializing";
+  while (Date.now() < deadline) {
+    const healthCheck = await probePublicEndpoint(`${normalizedBase}/api/internal/sandbox/health`);
+    const snapshotCheck = await probePublicEndpoint(`${normalizedBase}/api/system/snapshot`);
+    lastState = `${healthCheck.status ?? healthCheck.error}|${snapshotCheck.status ?? snapshotCheck.error}`;
+    if (healthCheck.ok && snapshotCheck.ok && healthCheck.payload?.status === "ready") {
+      log(`public tunnel readiness verified (${healthCheck.payload?.status}, snapshot=${snapshotCheck.statusCode})`);
+      return;
+    }
+    await delay(1000);
+  }
+  throw new Error(`public URL ${baseUrl} not ready in ${tunnelReadinessTimeoutMs}ms; last state=${lastState}`);
+}
+
+async function probePublicEndpoint(url) {
+  try {
+    const response = await Promise.race([
+      fetch(url),
+      delay(4_000).then(() => {
+        throw new Error("timeout");
+      }),
+    ]);
+    const statusCode = response.status;
+    const bodyText = await response.text();
+    let payload = null;
+    try {
+      payload = JSON.parse(bodyText);
+    } catch {
+      // Keep raw body for debug when endpoint is not JSON.
+    }
+    return {
+      ok: response.ok,
+      statusCode,
+      status: payload?.status ?? String(statusCode),
+      payload,
+      raw: bodyText.slice(0, 200),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      statusCode: 0,
+      status: "error",
+      error: String(error?.message ?? error),
+    };
   }
 }
 
