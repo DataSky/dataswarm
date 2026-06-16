@@ -451,7 +451,7 @@ function verifyToolProxyResponse({
 
   const toolCall = db
     .prepare(
-      `SELECT id, status, output_summary, output_payload_uri
+      `SELECT id, status, output_summary, output_payload_uri, metadata_json
        FROM tool_calls
        WHERE id = ?
        LIMIT 1`,
@@ -515,10 +515,10 @@ function verifyToolProxyResponse({
   );
 
   if (expectedTraceQueryMetadata && toolName === "trace.query") {
-    const traceMetadata = parseJson(observation?.metadata_json, {});
+    const traceMetadata = parseJson(toolCall?.metadata_json, {});
     const traceQuery = traceMetadata?.traceQuery ?? traceMetadata?.trace_query ?? {};
     expect(
-      `${toolName} trace.query observation metadata resolves active conversation`,
+      `${toolName} trace.query tool_call metadata resolves active conversation`,
       traceQuery.resolvedConversationId === expectedTraceQueryMetadata.resolvedConversationId &&
         traceQuery.usedActiveConversationFallback === expectedTraceQueryMetadata.usedActiveConversationFallback,
       JSON.stringify(traceMetadata),
