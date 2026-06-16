@@ -550,7 +550,29 @@ function extractTunnelUrl(text) {
   if (preferred) {
     return preferred;
   }
-  return urls.find((url) => !/twitter|docs|dashboard|console|admin|settings/i.test(url)) ?? "";
+  return (
+    urls.find((url) => {
+      if (/twitter|docs|dashboard|console|admin|settings/i.test(url)) {
+        return false;
+      }
+      try {
+        const parsed = new URL(url);
+        const host = parsed.hostname.toLowerCase();
+        if (host === "www.cloudflare.com") {
+          return false;
+        }
+        if (host.endsWith(".cloudflare.com") && !host.endsWith(".trycloudflare.com")) {
+          return false;
+        }
+        if (/\/api\//.test(parsed.pathname) || /\/docs\//.test(parsed.pathname)) {
+          return false;
+        }
+      } catch {
+        return false;
+      }
+      return true;
+    }) ?? ""
+  );
 }
 
 function stripAnsi(value) {
