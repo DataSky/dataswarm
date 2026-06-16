@@ -77,7 +77,9 @@ expect(
     /swarm\.branch\.contract\.materialized/.test(verifier) &&
     /swarm\.branch\.final\.materialized/.test(verifier) &&
     /sandbox\.agent\.observation\.created/.test(verifier) &&
-    /sandbox\.agent\.model_call/.test(verifier),
+    /sandbox\.agent\.model_call/.test(verifier) &&
+    /sandboxSchemaLoopEvents/.test(verifier) &&
+    /dataswarm\.sandbox-action-schema\.v4\.1/.test(verifier),
   "Verifier should require replayable contract/final/sandbox-agent evidence before accepting a V4.1 swarm result.",
 );
 

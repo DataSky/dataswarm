@@ -1996,6 +1996,14 @@ async function loadSwarmEventEvidence(runId: string) {
          AND (event_type LIKE 'capability.invoke.%' OR event_type LIKE 'sandbox.tool_proxy.call.%')`,
     )
     .all(runId) as Array<{ event_type: string; payload_json: string | null }>;
+  const sandboxLoopRows = db
+    .prepare(
+      `SELECT event_type, payload_json
+       FROM run_events
+       WHERE run_id = ?
+         AND event_type = 'sandbox.agent.loop.started'`,
+    )
+    .all(runId) as Array<{ event_type: string; payload_json: string | null }>;
   const toolCallStatusCounts: Record<string, Record<string, number>> = {};
   for (const row of toolRows) {
     const toolName = row.tool_name || "unknown";
@@ -2027,11 +2035,26 @@ async function loadSwarmEventEvidence(runId: string) {
       status: row.event_type.split(".").at(-1),
     };
   });
+  const sandboxLoopEvents = sandboxLoopRows.map((row) => {
+    const payload = parseJsonObject(row.payload_json);
+    const canonicalActionTypes = Array.isArray(payload.canonicalActionTypes)
+      ? payload.canonicalActionTypes.filter((item): item is string => typeof item === "string")
+      : [];
+    return {
+      type: row.event_type,
+      branchId: String(payload.branch_id ?? payload.branchId ?? ""),
+      actionSchemaVersion: String(payload.actionSchemaVersion ?? ""),
+      canonicalActionTypes,
+      repairPolicy: isRecord(payload.repairPolicy) ? payload.repairPolicy : {},
+      budgetPolicy: isRecord(payload.budgetPolicy) ? payload.budgetPolicy : {},
+    };
+  });
   return {
     eventTypeCounts,
     toolCallStatusCounts,
     toolCalls,
     capabilityEvents,
+    sandboxLoopEvents,
     capabilityInvokeStartedCount: eventCount("capability.invoke.started"),
     capabilityInvokeCompletedCount: eventCount("capability.invoke.completed"),
     capabilityInvokeFailedCount: eventCount("capability.invoke.failed"),

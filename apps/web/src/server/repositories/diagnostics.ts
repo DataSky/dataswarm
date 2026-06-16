@@ -431,6 +431,19 @@ function buildSwarmEvidenceSummary(events: Row[], toolCalls: Row[], observations
   const sandboxModelEvents = events.filter((event) =>
     ["sandbox.agent.model_call_completed", "sandbox.agent.model_call_failed"].includes(String(event.event_type)),
   );
+  const sandboxLoopStartedEvents = events.filter((event) => String(event.event_type) === "sandbox.agent.loop.started");
+  const sandboxSchemaLoopEvents = sandboxLoopStartedEvents.filter((event) => {
+    const payload = payloadOf(event);
+    const canonicalActions = arrayOfStrings(payload.canonicalActionTypes);
+    return (
+      String(payload.actionSchemaVersion ?? "") === "dataswarm.sandbox-action-schema.v4.1" &&
+      canonicalActions.includes("web.search") &&
+      canonicalActions.includes("artifact.create") &&
+      canonicalActions.includes("run_python") &&
+      Number(recordOrEmpty(payload.repairPolicy).maxRepairAttempts ?? 0) >= 2 &&
+      Number(recordOrEmpty(payload.budgetPolicy).maxSteps ?? 0) > 0
+    );
+  });
   const repairStartedEvents = events.filter((event) => String(event.event_type) === "sandbox.agent.action_repair_started");
   const repairSucceededEvents = events.filter((event) => String(event.event_type) === "sandbox.agent.action_repair_succeeded");
   const repairFailedEvents = events.filter((event) => String(event.event_type) === "sandbox.agent.action_repair_failed");
@@ -514,6 +527,8 @@ function buildSwarmEvidenceSummary(events: Row[], toolCalls: Row[], observations
     sandboxObservationEventCount: sandboxObservationEvents.length,
     sandboxModelStartedEventCount: sandboxModelStartedEvents.length,
     sandboxModelEventCount: sandboxModelEvents.length,
+    sandboxLoopStartedEventCount: sandboxLoopStartedEvents.length,
+    sandboxActionSchemaPolicyEventCount: sandboxSchemaLoopEvents.length,
     reduceEventCount: reduceEvents.length,
     finalArtifactEventCount: finalArtifactEvents.length,
     branchObservationIdCount: branchObservationMetadata.length,
@@ -526,6 +541,7 @@ function buildSwarmEvidenceSummary(events: Row[], toolCalls: Row[], observations
       (!hasSandboxRuntimeSignals || sandboxActionEvents.length >= branchPayloads.length) &&
       (!hasSandboxRuntimeSignals || sandboxObservationEvents.length >= branchPayloads.length) &&
       (!hasSandboxRuntimeSignals || sandboxModelEvents.length >= branchPayloads.length) &&
+      (!hasSandboxRuntimeSignals || sandboxSchemaLoopEvents.length >= branchPayloads.length) &&
       reduceEvents.length > 0 &&
       finalArtifactEvents.length > 0 &&
       branchObservationMetadata.length > 0 &&
@@ -587,7 +603,7 @@ function buildSwarmEvidenceSummary(events: Row[], toolCalls: Row[], observations
     `Branch evidence contracts/finals: contracts=${branchContractCount}, contractMaterializedEvents=${branchContractMaterializedEvents.length}, finals=${branchFinalCount}, finalMaterializedEvents=${branchFinalMaterializedEvents.length}, final limitations=${branchFinalLimitationCount}.`,
     `Branch evidence matrix: branches=${branchEvidenceMatrix.length}, below-min-real-model-actions=${branchesMissingMinimumRealModelActions}, below-min-event-real-model-actions=${branchesWithoutEventRealModelActions}, missing-contract-materialized-event=${branchesMissingBranchContractMaterializedEvent}, missing-minimum-evidence=${branchesMissingMinimumEvidence}, missing-final-output-schema=${branchesMissingFinalOutputSchema}, missing-final-materialized-event=${branchesMissingBranchFinalMaterializedEvent}, missing-web-search-observation=${branchesMissingWebSearchObservationCoverage}, missing-run-python-image=${branchesMissingRunPythonImageArtifactCoverage}, missing-markdown-summary=${branchesMissingMarkdownSummaryArtifactCoverage}, missing-artifact-source-observation=${branchesMissingArtifactSourceObservationCoverage}, with-unsupported-claims=${branchesWithUnsupportedClaims}, with-fallback/degraded=${branchesWithFallback}, without-parent-proxy=${branchesWithoutParentProxyEvidence}, missing-required-tool-evidence=${branchesMissingRequiredToolEvidence}, without-artifacts=${branchesWithoutArtifacts}.`,
     `Artifact coverage: image=${imageArtifactCount}, html=${htmlArtifactCount}, markdown=${markdownArtifactCount}, final-html-report=${finalHtmlReportArtifactCount}, final-html-source-covered=${finalHtmlReportSourceCoveredCount}, final-artifact-events=${finalArtifactEvents.length}, branch-linked=${branchLinkedArtifactCount}, sourceObservation-linked=${sourceObservationLinkedArtifactCount}.`,
-    `Trace replayability: replayable=${traceReplayability.replayable}, contractMaterializedEvents=${traceReplayability.branchContractMaterializedEventCount}, finalMaterializedEvents=${traceReplayability.branchFinalMaterializedEventCount}, branchCompletedEvents=${traceReplayability.branchCompletedEventCount}, sandboxActionEvents=${traceReplayability.sandboxActionEventCount}, sandboxObservationEvents=${traceReplayability.sandboxObservationEventCount}, sandboxModelStartedEvents=${traceReplayability.sandboxModelStartedEventCount}, sandboxModelTerminalEvents=${traceReplayability.sandboxModelEventCount}, reduceEvents=${traceReplayability.reduceEventCount}, finalArtifactEvents=${traceReplayability.finalArtifactEventCount}, branchObservationIds=${traceReplayability.branchObservationIdCount}, artifacts=${traceReplayability.artifactCount}.`,
+    `Trace replayability: replayable=${traceReplayability.replayable}, contractMaterializedEvents=${traceReplayability.branchContractMaterializedEventCount}, finalMaterializedEvents=${traceReplayability.branchFinalMaterializedEventCount}, branchCompletedEvents=${traceReplayability.branchCompletedEventCount}, sandboxActionEvents=${traceReplayability.sandboxActionEventCount}, sandboxObservationEvents=${traceReplayability.sandboxObservationEventCount}, sandboxModelStartedEvents=${traceReplayability.sandboxModelStartedEventCount}, sandboxModelTerminalEvents=${traceReplayability.sandboxModelEventCount}, sandboxLoopStartedEvents=${traceReplayability.sandboxLoopStartedEventCount}, sandboxActionSchemaPolicyEvents=${traceReplayability.sandboxActionSchemaPolicyEventCount}, reduceEvents=${traceReplayability.reduceEventCount}, finalArtifactEvents=${traceReplayability.finalArtifactEventCount}, branchObservationIds=${traceReplayability.branchObservationIdCount}, artifacts=${traceReplayability.artifactCount}.`,
     `Reducer input coverage: branchContracts=${Number(reducerInputCoverage.branchContractCount ?? 0)}, branchFinals=${Number(reducerInputCoverage.branchFinalCount ?? 0)}, branchObservations=${Number(reducerInputCoverage.branchObservationIdCount ?? 0)}, artifacts=${Number(reducerInputCoverage.artifactCount ?? 0)}, usesBranchFinals=${reducerInputCoverage.reducerUsesBranchFinals === true}.`,
     `Trace query resolution: calls=${traceQueryResolution.callCount}, activeFallback=${traceQueryResolution.activeConversationFallbackCount}, unresolvedCurrentLiteral=${traceQueryResolution.unresolvedCurrentLiteralCount}.`,
     `Verification gate coverage: complete=${verificationGateCoverage.complete === true}, presentExpected=${Number(verificationGateCoverage.presentExpectedGateCount ?? 0)}/${Number(verificationGateCoverage.expectedGateCount ?? 0)}, failed=${Number(verificationGateCoverage.failedGateCount ?? failedChecks.length)}.`,
@@ -615,6 +631,8 @@ function buildSwarmEvidenceSummary(events: Row[], toolCalls: Row[], observations
     sandboxObservationEventCount: sandboxObservationEvents.length,
     sandboxModelStartedEventCount: sandboxModelStartedEvents.length,
     sandboxModelEventCount: sandboxModelEvents.length,
+    sandboxLoopStartedEventCount: sandboxLoopStartedEvents.length,
+    sandboxActionSchemaPolicyEventCount: sandboxSchemaLoopEvents.length,
     parentProxyCompletionCount,
     parentProxyFailureCount,
     traceReplayability,

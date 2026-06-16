@@ -75,6 +75,14 @@ export type SwarmEventEvidence = {
   toolCallStatusCounts?: Record<string, Record<string, number>>;
   toolCalls?: Array<{ id?: string; toolName?: string; status?: string; branchId?: string }>;
   capabilityEvents?: Array<{ type?: string; toolName?: string; capabilityName?: string; branchId?: string; status?: string; observationId?: string; toolCallId?: string }>;
+  sandboxLoopEvents?: Array<{
+    type?: string;
+    branchId?: string;
+    actionSchemaVersion?: string;
+    canonicalActionTypes?: string[];
+    repairPolicy?: Record<string, unknown>;
+    budgetPolicy?: Record<string, unknown>;
+  }>;
   capabilityInvokeStartedCount?: number;
   capabilityInvokeCompletedCount?: number;
   capabilityInvokeFailedCount?: number;
@@ -133,6 +141,10 @@ function asText(value: unknown, fallback = ""): string {
     return String(value);
   }
   return fallback;
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
 const contradictionPatterns: Array<{ id: string; pattern: RegExp }> = [
@@ -1057,6 +1069,17 @@ function buildTraceDiagnosticsReplayabilityCheck(input: SwarmVerificationInput):
   const sandboxModelEvents =
     Number(eventCounts["sandbox.agent.model_call_completed"] ?? 0) +
     Number(eventCounts["sandbox.agent.model_call_failed"] ?? 0);
+  const sandboxSchemaLoopEvents = (input.eventEvidence?.sandboxLoopEvents ?? []).filter((event) => {
+    const canonicalActions = asStringArray(event.canonicalActionTypes);
+    return (
+      event.actionSchemaVersion === "dataswarm.sandbox-action-schema.v4.1" &&
+      canonicalActions.includes("web.search") &&
+      canonicalActions.includes("artifact.create") &&
+      canonicalActions.includes("run_python") &&
+      Number(event.repairPolicy?.maxRepairAttempts ?? 0) >= 2 &&
+      Number(event.budgetPolicy?.maxSteps ?? 0) > 0
+    );
+  }).length;
   const capabilityEvents =
     Number(input.eventEvidence?.capabilityInvokeCompletedCount ?? 0) +
     Number(input.eventEvidence?.sandboxToolProxyCompletedCount ?? 0);
@@ -1094,6 +1117,9 @@ function buildTraceDiagnosticsReplayabilityCheck(input: SwarmVerificationInput):
   if (hasSandboxRuntimeSignals && sandboxModelEvents < input.completedBranches) {
     missing.push(`sandbox.agent.model_call events ${sandboxModelEvents}/${input.completedBranches}`);
   }
+  if (hasSandboxRuntimeSignals && sandboxSchemaLoopEvents < input.completedBranches) {
+    missing.push(`sandbox.agent.loop.started schema policy ${sandboxSchemaLoopEvents}/${input.completedBranches}`);
+  }
   if ((input.branchContracts ?? []).some((contract) => contract.requiredTools.length > 0) && capabilityEvents < 1) {
     missing.push("capability/proxy completion events missing");
   }
@@ -1102,7 +1128,7 @@ function buildTraceDiagnosticsReplayabilityCheck(input: SwarmVerificationInput):
     status: missing.length === 0 ? "passed" : "failed",
     detail:
       missing.length === 0
-        ? `Trace replay evidence is sufficient before verify publication: branchContractMaterializedEvents=${branchContractMaterializedEvents}, branchFinalMaterializedEvents=${branchFinalMaterializedEvents}, branchCompletedEvents=${branchCompletedEvents}, sandboxActionEvents=${sandboxActionEvents}, sandboxObservationEvents=${sandboxObservationEvents}, sandboxModelEvents=${sandboxModelEvents}, reduceEvents=${reduceEvents}, finalArtifactEvents=${finalArtifactEvents}, capability/proxy completions=${capabilityEvents}.`
+        ? `Trace replay evidence is sufficient before verify publication: branchContractMaterializedEvents=${branchContractMaterializedEvents}, branchFinalMaterializedEvents=${branchFinalMaterializedEvents}, branchCompletedEvents=${branchCompletedEvents}, sandboxActionEvents=${sandboxActionEvents}, sandboxObservationEvents=${sandboxObservationEvents}, sandboxModelEvents=${sandboxModelEvents}, sandboxSchemaLoopEvents=${sandboxSchemaLoopEvents}, reduceEvents=${reduceEvents}, finalArtifactEvents=${finalArtifactEvents}, capability/proxy completions=${capabilityEvents}.`
         : `Trace replay evidence is incomplete: ${missing.join(", ")}.`,
   };
 }

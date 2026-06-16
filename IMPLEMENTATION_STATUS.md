@@ -1,3 +1,10 @@
+## 2026-06-17 Progress Note: verifier and diagnostics action schema replay coverage
+
+- Extended parent-side swarm event evidence to include `sandbox.agent.loop.started` payloads as `sandboxLoopEvents`, preserving branch id, V4.1 action schema version, canonical action list, repair policy, and budget policy.
+- Tightened `trace_diagnostics_replayability` so sandbox-runtime branches now require replayable V4.1 action schema policy evidence (`dataswarm.sandbox-action-schema.v4.1`) before verification can pass.
+- Conversation diagnostics now exposes `sandboxLoopStartedEventCount` and `sandboxActionSchemaPolicyEventCount` in `swarmEvidence.traceReplayability` and diagnosis text, making schema/policy replay visible by `conversationId`.
+- Updated `scripts/swarm-verifier-smoke.mjs` to guard the new action schema replay requirement.
+
 ## 2026-06-17 Progress Note: sandbox action schema policy metadata
 
 - Added explicit V4.1 action schema metadata to `sandbox.agent.loop.started` for V3 sandbox agents:
