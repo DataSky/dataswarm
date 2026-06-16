@@ -20,8 +20,13 @@ import type { ModelProvider } from "../models/provider";
 import type { ModelProfile } from "../repositories/model-profiles";
 import type { SpawnAgentAction, SpawnSwarmAction, SwarmActionBranchDefinition } from "./agentic-types";
 import { reviewSwarmResult, type SwarmReviewResult } from "./swarm-reviewer";
-import { buildSwarmReduction, formatSwarmReductionEvidence, type SwarmReductionResult } from "./swarm-reducer";
-import { buildSwarmVerification, buildSwarmVerificationGateCoverage, type SwarmVerificationResult } from "./swarm-verifier";
+import {
+  buildSwarmReduction,
+  formatSwarmReductionEvidence,
+  type SwarmReductionResult,
+} from "./swarm-reducer";
+import { buildSwarmVerification, type SwarmVerificationResult } from "./swarm-verifier";
+import { buildSwarmVerificationGateCoverage } from "./swarm-verifier";
 
 export type BranchArtifactRequirement = {
   type: "markdown" | "html" | "image" | "json" | "image_metadata";

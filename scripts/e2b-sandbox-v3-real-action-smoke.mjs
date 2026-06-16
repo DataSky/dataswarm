@@ -65,6 +65,7 @@ const job = {
   toolCatalog: [
     { name: "web.search", capability: "web_search", adapterMode: "parent", risk: "low" },
     { name: "artifact.create", capability: "artifact_create", adapterMode: "parent", risk: "low" },
+    { name: "run_python", capability: "visualization", adapterMode: "local", risk: "medium" },
   ],
   skillManifests: [
     {
