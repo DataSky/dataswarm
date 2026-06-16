@@ -49,7 +49,11 @@ export async function POST(
     mode: body.mode ?? "agent",
   });
 
-  const userMessage = await createUserMessage({ conversationId, text, runId });
+  const userMessage = await createUserMessage({
+    conversationId,
+    text,
+    runId,
+  });
   logServer("info", "api.messages.post.created", {
     requestId,
     conversationId,

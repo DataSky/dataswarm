@@ -52,12 +52,67 @@ type RuntimeActivityItem = {
 };
 
 type RuntimeActivityByRun = Record<string, RuntimeActivityItem[]>;
+type RunEventsByRun = Record<string, RunEventEnvelope[]>;
 
 type ConversationTurn = {
   key: string;
   runId: string | null;
   user?: UiMessage;
   assistant?: UiMessage;
+};
+
+type TurnRunSummary = {
+  runId: string;
+  status: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  durationMs: number | null;
+  inputCharacters: number;
+  outputCharacters: number;
+  modelCalls: number;
+  responseModelCalls: number;
+  plannerModelCalls: number;
+  maxOutputTokens: number | null;
+  contextMessages: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  cacheCreationTokens: number | null;
+  toolCalls: number;
+  failedToolCalls: number;
+  observations: number;
+  artifacts: number;
+  swarm: {
+    branchCount: number | null;
+    completedBranches: number;
+    failedBranches: number;
+    effectiveConcurrency: number | null;
+    maxConcurrency: number | null;
+    executionMode: string | null;
+    batchCount: number | null;
+  } | null;
+  sandboxes: {
+    total: number;
+    external: number;
+    sessions: string[];
+    externalIds: string[];
+  };
+  agentEvents: {
+    total: number;
+    recent: Array<{ branchId: string; type: string; level: string; message: string; timestamp: string | null }>;
+  };
+  branches: Array<{
+    index: number | null;
+    id: string;
+    title: string;
+    status: string;
+    durationMs: number | null;
+    sandboxSessionId: string | null;
+    externalSandboxId: string | null;
+    agentEventCount: number | null;
+    artifactCount: number | null;
+  }>;
 };
 
 type SuggestionContext = {
@@ -155,6 +210,7 @@ export function ConversationWorkspace({
   const [runtimeItemsByRun, setRuntimeItemsByRun] = useState<RuntimeActivityByRun>(() =>
     activityItemsByRunFromEvents(initialRunEvents),
   );
+  const [runEventsByRun, setRunEventsByRun] = useState<RunEventsByRun>(() => runEventsByRunFromEvents(initialRunEvents));
   const [suggestedPrompts, setSuggestedPrompts] = useState<string[]>(() =>
     buildSuggestedPromptsFromMessages(initialMessages),
   );
@@ -180,7 +236,7 @@ export function ConversationWorkspace({
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, runtimeItemsByRun, runStatus, suggestedPrompts]);
+  }, [messages, runtimeItemsByRun, runEventsByRun, runStatus, suggestedPrompts]);
 
   useEffect(() => {
     return () => {
@@ -228,14 +284,24 @@ export function ConversationWorkspace({
     });
     setMessages((current) => [
       ...current,
-      { id: localUserMessageId, runId: null, role: "user", status: "completed", parts: [{ type: "text", text }] },
+      {
+        id: localUserMessageId,
+        runId: null,
+        role: "user",
+        status: "completed",
+        parts: [{ type: "text", text }],
+      },
     ]);
 
     try {
       const response = await fetch(`/api/conversations/${selected.id}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, model, mode: "agent" }),
+        body: JSON.stringify({
+          text,
+          model,
+          mode: "agent",
+        }),
       });
 
       if (!response.ok) {
@@ -333,6 +399,7 @@ export function ConversationWorkspace({
         if (!shouldApplyEvent(parsed)) {
           return;
         }
+        setRunEventsByRun((current) => appendRunEventByRun(current, parsed));
         logUi(`events.${eventType}`, summarizeRunEvent(parsed));
         handleRunEvent(parsed, source, {
           getAssistantMessageId,
@@ -411,12 +478,15 @@ export function ConversationWorkspace({
       }
 
       if (parsed.type === "message.completed") {
-        const assistantMessageId = context.getAssistantMessageId();
+        const payload = asPayload(parsed.payload);
+        const assistantMessageId =
+          typeof payload.message_id === "string" ? payload.message_id : context.getAssistantMessageId();
+        const status = payload.status === "failed" || payload.status === "cancelled" ? payload.status : "completed";
         if (!assistantMessageId) {
           void refreshConversation();
         } else {
           setMessages((current) =>
-            current.map((message) => (message.id === assistantMessageId ? { ...message, status: "completed" } : message)),
+            current.map((message) => (message.id === assistantMessageId ? { ...message, status } : message)),
           );
         }
         void refreshConversation();
@@ -583,7 +653,16 @@ export function ConversationWorkspace({
                   key={turn.key}
                   turn={turn}
                   runtimeItems={turn.runId ? runtimeItemsByRun[turn.runId] ?? [] : []}
-                  artifacts={turn.runId ? artifacts.filter((artifact) => artifact.runId === turn.runId) : []}
+                  runSummary={
+                    turn.runId
+                      ? buildTurnRunSummary(
+                          turn.runId,
+                          runEventsByRun[turn.runId] ?? [],
+                          turn,
+                          artifacts.filter((artifact) => artifact.runId === turn.runId),
+                        )
+                      : null
+                  }
                   onArtifactClick={(artifactId) => {
                     setSelectedArtifactId(artifactId);
                     setArtifactPanelOpen(true);
@@ -685,17 +764,22 @@ export function ConversationWorkspace({
 function ConversationTurnView({
   turn,
   runtimeItems,
-  artifacts,
+  runSummary,
   onArtifactClick,
 }: {
   turn: ConversationTurn;
   runtimeItems: RuntimeActivityItem[];
-  artifacts: ArtifactRecord[];
+  runSummary: TurnRunSummary | null;
   onArtifactClick: (artifactId: string) => void;
 }) {
   return (
     <div className="space-y-4">
-      {turn.user ? <MessageBubble message={turn.user} artifacts={[]} onArtifactClick={onArtifactClick} /> : null}
+      {turn.user ? (
+        <MessageBubble
+          message={turn.user}
+          onArtifactClick={onArtifactClick}
+        />
+      ) : null}
       {turn.assistant || runtimeItems.length > 0 ? (
         <article className="flex justify-start gap-3">
           <div className="mt-1 flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]">
@@ -704,7 +788,13 @@ function ConversationTurnView({
           <div className="grid min-w-0 w-full max-w-3xl gap-3">
             {runtimeItems.length > 0 ? <RuntimeActivityList items={runtimeItems} /> : null}
             {turn.assistant ? (
-              <MessageCard message={turn.assistant} artifacts={artifacts} onArtifactClick={onArtifactClick} />
+              <>
+                <MessageCard
+                  message={turn.assistant}
+                  onArtifactClick={onArtifactClick}
+                />
+                {runSummary ? <TurnRunSummaryCard summary={runSummary} /> : null}
+              </>
             ) : (
               <div className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-4 py-3">
                 <div className="mb-2 flex items-center gap-2 font-mono text-xs uppercase text-[var(--muted)]">
@@ -726,11 +816,9 @@ function ConversationTurnView({
 
 function MessageBubble({
   message,
-  artifacts,
   onArtifactClick,
 }: {
   message: UiMessage;
-  artifacts: ArtifactRecord[];
   onArtifactClick: (artifactId: string) => void;
 }) {
   const isUser = message.role === "user";
@@ -744,7 +832,10 @@ function MessageBubble({
         </div>
       ) : null}
       <div className={`min-w-0 max-w-[78%] ${isUser ? "order-first" : ""}`}>
-        <MessageCard message={message} artifacts={artifacts} onArtifactClick={onArtifactClick} />
+        <MessageCard
+          message={message}
+          onArtifactClick={onArtifactClick}
+        />
       </div>
       {isUser ? (
         <div className="mt-1 flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--user-surface)] text-[var(--user-foreground)]">
@@ -757,11 +848,9 @@ function MessageBubble({
 
 function MessageCard({
   message,
-  artifacts,
   onArtifactClick,
 }: {
   message: UiMessage;
-  artifacts: ArtifactRecord[];
   onArtifactClick: (artifactId: string) => void;
 }) {
   const isUser = message.role === "user";
@@ -794,34 +883,6 @@ function MessageCard({
           ),
         )}
       </div>
-      {!isUser && artifacts.length > 0 ? (
-        <div className="mt-3 grid gap-2 border-t border-[var(--line)] pt-3">
-          <div className="text-xs font-semibold uppercase text-[var(--muted)]">Artifacts</div>
-          <div className="grid gap-2">
-            {artifacts.map((artifact) => (
-              <button
-                key={artifact.id}
-                type="button"
-                onClick={() => onArtifactClick(artifact.id)}
-                className="grid gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-2)] p-2 text-left hover:border-[var(--accent-muted)]"
-              >
-                <div className="flex min-w-0 items-center gap-2">
-                  <ArtifactIcon type={artifact.type} />
-                  <span className="truncate text-sm font-medium">{artifact.title}</span>
-                  <span className="ml-auto shrink-0 font-mono text-[11px] text-[var(--muted)]">{artifact.type}</span>
-                </div>
-                {artifact.type === "image" ? (
-                  <iframe
-                    src={`/api/artifacts/${artifact.id}/preview`}
-                    title={`${artifact.title} preview`}
-                    className="h-72 w-full rounded-md border border-[var(--line)] bg-white"
-                  />
-                ) : null}
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -904,6 +965,139 @@ function RuntimeActivityList({ items }: { items: RuntimeActivityItem[] }) {
   );
 }
 
+function TurnRunSummaryCard({ summary }: { summary: TurnRunSummary }) {
+  const [expanded, setExpanded] = useState(false);
+  const tokenText = [
+    `in ${formatNumberOrNa(summary.inputTokens)}`,
+    `out ${formatNumberOrNa(summary.outputTokens)}`,
+    `cache ${formatNumberOrNa(totalNullableNumbers([summary.cacheReadTokens, summary.cacheWriteTokens, summary.cacheCreationTokens]))}`,
+  ].join(" · ");
+  const durationText = summary.durationMs === null ? "running" : formatDuration(summary.durationMs);
+  const swarmText = summary.swarm
+    ? `${summary.swarm.completedBranches}/${summary.swarm.branchCount ?? "?"} branches · c${summary.swarm.effectiveConcurrency ?? "?"}`
+    : "no swarm";
+
+  return (
+    <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-2)] p-3 text-xs text-[var(--muted)]">
+      <button
+        type="button"
+        className="flex w-full min-w-0 items-center justify-between gap-3 text-left"
+        onClick={() => setExpanded((current) => !current)}
+        aria-expanded={expanded}
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          {expanded ? <ChevronDown className="size-4 shrink-0" /> : <ChevronRight className="size-4 shrink-0" />}
+          <Activity className="size-4 shrink-0 text-[var(--accent)]" />
+          <span className="truncate font-semibold text-[var(--foreground)]">Turn summary</span>
+        </div>
+        <div className="flex min-w-0 flex-wrap justify-end gap-2 font-mono">
+          <span>{durationText}</span>
+          <span>{tokenText}</span>
+          <span>{swarmText}</span>
+        </div>
+      </button>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-4">
+        <SummaryMetric label="Status" value={summary.status} />
+        <SummaryMetric label="Duration" value={durationText} />
+        <SummaryMetric label="Tokens" value={tokenText} />
+        <SummaryMetric label="Sandboxes" value={`${summary.sandboxes.total} sessions`} />
+      </div>
+
+      {expanded ? (
+        <div className="mt-3 grid gap-3">
+          <dl className="grid gap-1 rounded-md border border-[var(--line)] bg-[var(--surface)] p-2 font-mono text-[11px] leading-5 sm:grid-cols-2">
+            <SummaryDetail label="Run" value={summary.runId} />
+            <SummaryDetail label="Started" value={formatTimestamp(summary.startedAt)} />
+            <SummaryDetail label="Completed" value={formatTimestamp(summary.endedAt)} />
+            <SummaryDetail label="Input chars" value={String(summary.inputCharacters)} />
+            <SummaryDetail label="Output chars" value={String(summary.outputCharacters)} />
+            <SummaryDetail label="Model calls" value={`${summary.modelCalls} (${summary.plannerModelCalls} planner, ${summary.responseModelCalls} response)`} />
+            <SummaryDetail label="Context" value={`${formatNumberOrNa(summary.contextMessages)} messages · max ${formatNumberOrNa(summary.maxOutputTokens)} tokens`} />
+            <SummaryDetail label="Tools" value={`${summary.toolCalls} calls · ${summary.failedToolCalls} failed`} />
+            <SummaryDetail label="Observations" value={String(summary.observations)} />
+            <SummaryDetail label="Artifacts" value={String(summary.artifacts)} />
+            <SummaryDetail label="Cache tokens" value={`read ${formatNumberOrNa(summary.cacheReadTokens)} · write ${formatNumberOrNa(summary.cacheWriteTokens)} · create ${formatNumberOrNa(summary.cacheCreationTokens)}`} />
+            <SummaryDetail label="External sandbox" value={`${summary.sandboxes.external} linked`} />
+          </dl>
+
+          {summary.swarm ? (
+            <div className="rounded-md border border-[var(--line)] bg-[var(--surface)] p-2">
+              <div className="mb-2 font-mono text-[11px] uppercase text-[var(--muted)]">Swarm</div>
+              <div className="grid gap-2 sm:grid-cols-4">
+                <SummaryMetric label="Branches" value={`${summary.swarm.completedBranches}/${summary.swarm.branchCount ?? "?"}`} />
+                <SummaryMetric label="Failed" value={String(summary.swarm.failedBranches)} />
+                <SummaryMetric label="Concurrency" value={`${summary.swarm.effectiveConcurrency ?? "?"}/${summary.swarm.maxConcurrency ?? "?"}`} />
+                <SummaryMetric label="Mode" value={summary.swarm.executionMode ?? "n/a"} />
+              </div>
+            </div>
+          ) : null}
+
+          {summary.branches.length > 0 ? (
+            <div className="rounded-md border border-[var(--line)] bg-[var(--surface)] p-2">
+              <div className="mb-2 font-mono text-[11px] uppercase text-[var(--muted)]">Sandbox branches</div>
+              <div className="grid gap-1">
+                {summary.branches.slice(0, 10).map((branch) => (
+                  <div
+                    key={`${branch.id}:${branch.index ?? "x"}`}
+                    className="grid gap-1 rounded-md bg-[var(--surface-2)] px-2 py-1.5 text-[11px] sm:grid-cols-[minmax(0,1.5fr)_90px_90px_minmax(0,1fr)]"
+                  >
+                    <span className="truncate font-medium text-[var(--foreground)]">{branch.title}</span>
+                    <span className="font-mono">{branch.status}</span>
+                    <span className="font-mono">{branch.durationMs === null ? "n/a" : formatDuration(branch.durationMs)}</span>
+                    <span className="min-w-0 truncate font-mono">
+                      {branch.externalSandboxId ?? branch.sandboxSessionId ?? "sandbox n/a"} · events {formatNumberOrNa(branch.agentEventCount)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {summary.agentEvents.recent.length > 0 ? (
+            <div className="rounded-md border border-[var(--line)] bg-[var(--surface)] p-2">
+              <div className="mb-2 font-mono text-[11px] uppercase text-[var(--muted)]">
+                Sandbox agent events · {summary.agentEvents.total}
+              </div>
+              <div className="grid gap-1">
+                {summary.agentEvents.recent.map((event, index) => (
+                  <div key={`${event.timestamp ?? index}:${event.branchId}:${event.type}`} className="min-w-0 rounded-md bg-[var(--surface-2)] px-2 py-1.5">
+                    <div className="flex min-w-0 items-center gap-2 font-mono text-[11px]">
+                      <span className="truncate text-[var(--foreground)]">{event.branchId}</span>
+                      <span>{event.type}</span>
+                      <span>{event.level}</span>
+                      <span className="ml-auto shrink-0">{formatTimestamp(event.timestamp)}</span>
+                    </div>
+                    <div className="mt-1 line-clamp-2 text-xs leading-5 text-[var(--muted)]">{event.message}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SummaryMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-md bg-[var(--surface)] px-2 py-1.5">
+      <div className="font-mono text-[10px] uppercase text-[var(--muted)]">{label}</div>
+      <div className="mt-0.5 truncate font-mono text-[11px] text-[var(--foreground)]">{value}</div>
+    </div>
+  );
+}
+
+function SummaryDetail({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid min-w-0 gap-1 sm:grid-cols-[96px_minmax(0,1fr)]">
+      <dt className="uppercase text-[var(--muted)]">{label}</dt>
+      <dd className="min-w-0 break-words text-[var(--foreground)]">{value}</dd>
+    </div>
+  );
+}
+
 function ActivityIcon({ item }: { item: RuntimeActivityItem }) {
   if (item.status === "running" || item.status === "queued") {
     return <Loader2 className="size-4 shrink-0 animate-spin text-[var(--blue)]" />;
@@ -961,12 +1155,12 @@ function ArtifactPanel({
 }) {
   return (
     <aside
-      className={`fixed inset-y-0 right-0 z-30 flex w-full max-w-[440px] flex-col border-l border-[var(--line)] bg-[var(--surface)] shadow-2xl transition-transform duration-200 ${
+      className={`fixed inset-y-0 right-0 z-30 flex w-full max-w-[440px] min-w-0 flex-col overflow-hidden border-l border-[var(--line)] bg-[var(--surface)] shadow-2xl transition-transform duration-200 sm:w-[440px] ${
         open ? "translate-x-0" : "translate-x-full"
       }`}
     >
-      <div className="flex h-16 items-center justify-between border-b border-[var(--line)] px-4">
-        <div>
+      <div className="flex h-16 min-w-0 items-center justify-between gap-3 border-b border-[var(--line)] px-4">
+        <div className="min-w-0">
           <h2 className="text-sm font-semibold">Artifacts</h2>
           <p className="font-mono text-xs text-[var(--muted)]">
             {artifacts.length} files · {formatBytes(artifacts.reduce((sum, item) => sum + (item.sizeBytes ?? 0), 0))}
@@ -974,7 +1168,7 @@ function ArtifactPanel({
         </div>
         <button
           type="button"
-          className="inline-flex size-8 items-center justify-center border border-[var(--line)] bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--foreground)]"
+          className="inline-flex size-8 shrink-0 items-center justify-center border border-[var(--line)] bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--foreground)]"
           onClick={() => onOpenChange(false)}
           aria-label="Close artifacts"
         >
@@ -983,9 +1177,9 @@ function ArtifactPanel({
       </div>
 
       {open ? (
-        <div className="grid min-h-0 flex-1 grid-rows-[240px_minmax(0,1fr)]">
-          <div className="overflow-y-auto border-b border-[var(--line)] p-3">
-            <div className="grid gap-2">
+        <div className="grid min-h-0 min-w-0 flex-1 grid-rows-[240px_minmax(0,1fr)]">
+          <div className="min-w-0 overflow-y-auto border-b border-[var(--line)] p-3">
+            <div className="grid min-w-0 gap-2">
               {artifacts.length === 0 ? (
                 <div className="px-2 py-8 text-sm text-[var(--muted)]">No artifacts</div>
               ) : (
@@ -994,7 +1188,7 @@ function ArtifactPanel({
                     key={artifact.id}
                     type="button"
                     onClick={() => onSelect(artifact.id)}
-                    className={`grid w-full gap-1 border px-3 py-2 text-left ${
+                    className={`grid w-full min-w-0 gap-1 overflow-hidden border px-3 py-2 text-left ${
                       selectedArtifact?.id === artifact.id
                         ? "border-[var(--accent)] bg-[var(--accent-soft)]"
                         : "border-[var(--line)] bg-[var(--surface-2)] hover:border-[var(--accent-muted)]"
@@ -1002,19 +1196,19 @@ function ArtifactPanel({
                   >
                     <div className="flex min-w-0 items-center gap-2">
                       <ArtifactIcon type={artifact.type} />
-                      <span className="truncate text-sm font-medium">{artifact.title}</span>
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{artifact.title}</span>
                     </div>
-                    <div className="flex items-center justify-between gap-2 font-mono text-xs text-[var(--muted)]">
-                      <span>{artifact.type}</span>
-                      <span>{formatBytes(artifact.sizeBytes)}</span>
+                    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-2 font-mono text-xs text-[var(--muted)]">
+                      <span className="min-w-0 truncate">{artifact.type}</span>
+                      <span className="shrink-0 whitespace-nowrap">{formatBytes(artifact.sizeBytes)}</span>
                     </div>
-                    <div className="flex items-center justify-between gap-2 font-mono text-[11px] text-[var(--muted)]">
-                      <span>{artifact.status}</span>
-                      <span>{artifact.contentHash ? truncateHash(artifact.contentHash) : "no hash"}</span>
+                    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-2 font-mono text-[11px] text-[var(--muted)]">
+                      <span className="min-w-0 truncate">{artifact.status}</span>
+                      <span className="shrink-0 whitespace-nowrap">{artifact.contentHash ? truncateHash(artifact.contentHash) : "no hash"}</span>
                     </div>
-                    <div className="flex items-center justify-between gap-2 font-mono text-[11px] text-[var(--muted)]">
-                      <span>{artifact.artifactKind ?? artifact.mimeType ?? "artifact"}</span>
-                      <span>{formatProvenanceCount(artifact)}</span>
+                    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-2 font-mono text-[11px] text-[var(--muted)]">
+                      <span className="min-w-0 truncate">{artifact.artifactKind ?? artifact.mimeType ?? "artifact"}</span>
+                      <span className="shrink-0 whitespace-nowrap">{formatProvenanceCount(artifact)}</span>
                     </div>
                   </button>
                 ))
@@ -1022,15 +1216,17 @@ function ArtifactPanel({
             </div>
           </div>
 
-          <div className="min-h-0 p-3">
+          <div className="min-h-0 min-w-0 p-3">
             {selectedArtifact ? (
-              <div className="flex h-full flex-col">
-                <div className="mb-3 flex items-start justify-between gap-3">
+              <div className="flex h-full min-w-0 flex-col overflow-hidden">
+                <div className="mb-3 flex min-w-0 items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <h3 className="truncate text-sm font-semibold">{selectedArtifact.title}</h3>
-                    <p className="font-mono text-xs text-[var(--muted)]">{selectedArtifact.id}</p>
+                    <h3 className="min-w-0 truncate text-sm font-semibold">{selectedArtifact.title}</h3>
+                    <p className="min-w-0 truncate font-mono text-xs text-[var(--muted)]" title={selectedArtifact.id}>
+                      {selectedArtifact.id}
+                    </p>
                   </div>
-                  <div className="flex gap-1">
+                  <div className="flex shrink-0 gap-1">
                     <a
                       className="inline-flex size-8 items-center justify-center border border-[var(--line)] bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--foreground)]"
                       href={`/api/artifacts/${selectedArtifact.id}/download`}
@@ -1049,8 +1245,8 @@ function ArtifactPanel({
                     </a>
                   </div>
                 </div>
-                <div className="mb-3 grid gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-2)] p-3 text-xs">
-                  <div className="grid grid-cols-2 gap-2">
+                <div className="mb-3 grid min-w-0 gap-2 overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--surface-2)] p-3 text-xs">
+                  <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-2">
                     <ArtifactMeta label="Type" value={selectedArtifact.type} />
                     <ArtifactMeta label="Status" value={selectedArtifact.status} />
                     <ArtifactMeta label="Version" value={selectedArtifact.version ? `v${selectedArtifact.version}` : "n/a"} />
@@ -1065,7 +1261,7 @@ function ArtifactPanel({
                   {Object.keys(selectedArtifact.metadata).length > 0 ? (
                     <details className="rounded-md border border-[var(--line)] bg-white px-2 py-1.5">
                       <summary className="cursor-pointer font-medium text-[var(--muted)]">Metadata</summary>
-                      <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px]">
+                      <pre className="mt-2 max-h-32 max-w-full overflow-auto whitespace-pre-wrap break-words font-mono text-[11px]">
                         {JSON.stringify(selectedArtifact.metadata, null, 2)}
                       </pre>
                     </details>
@@ -1074,7 +1270,7 @@ function ArtifactPanel({
                 <iframe
                   title={`${selectedArtifact.title} preview`}
                   src={`/api/artifacts/${selectedArtifact.id}/preview`}
-                  className="min-h-0 flex-1 border border-[var(--line)] bg-white"
+                  className="min-h-0 min-w-0 max-w-full flex-1 border border-[var(--line)] bg-white"
                 />
               </div>
             ) : (
@@ -1094,9 +1290,9 @@ function ArtifactQuality({ artifact }: { artifact: ArtifactRecord }) {
   }
 
   return (
-    <details className="rounded-md border border-[var(--line)] bg-white px-2 py-1.5" open>
+    <details className="min-w-0 overflow-hidden rounded-md border border-[var(--line)] bg-white px-2 py-1.5" open>
       <summary className="cursor-pointer text-[11px] font-semibold uppercase text-[var(--muted)]">Quality</summary>
-      <div className="mt-2 grid grid-cols-2 gap-2">
+      <div className="mt-2 grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-2">
         {entries.slice(0, 8).map(([key, value]) => (
           <ArtifactMeta key={key} label={humanizeKey(key)} value={formatQualityValue(value)} />
         ))}
@@ -1121,9 +1317,9 @@ function ArtifactProvenance({ artifact }: { artifact: ArtifactRecord }) {
   }
 
   return (
-    <details className="rounded-md border border-[var(--line)] bg-white px-2 py-1.5" open>
+    <details className="min-w-0 overflow-hidden rounded-md border border-[var(--line)] bg-white px-2 py-1.5" open>
       <summary className="cursor-pointer text-[11px] font-semibold uppercase text-[var(--muted)]">Provenance</summary>
-      <div className="mt-2 grid gap-2 font-mono text-[11px] text-[var(--muted)]">
+      <div className="mt-2 grid min-w-0 gap-2 font-mono text-[11px] text-[var(--muted)]">
         {artifact.sourceTraceId ? <KeyValueLine label="trace" value={artifact.sourceTraceId} /> : null}
         {artifact.createdByToolCallId ? <KeyValueLine label="tool call" value={artifact.createdByToolCallId} /> : null}
         {artifact.branchIds.length > 0 ? <KeyValueLine label="branches" value={artifact.branchIds.join(", ")} /> : null}
@@ -1137,9 +1333,9 @@ function ArtifactProvenance({ artifact }: { artifact: ArtifactRecord }) {
 
 function KeyValueLine({ label, value }: { label: string; value: string }) {
   return (
-    <div className="grid grid-cols-[84px_minmax(0,1fr)] gap-2">
+    <div className="grid min-w-0 grid-cols-[84px_minmax(0,1fr)] gap-2">
       <span className="uppercase">{label}</span>
-      <span className="truncate text-[var(--foreground)]" title={value}>
+      <span className="min-w-0 break-all text-[var(--foreground)]" title={value}>
         {value}
       </span>
     </div>
@@ -1148,9 +1344,9 @@ function KeyValueLine({ label, value }: { label: string; value: string }) {
 
 function ArtifactMeta({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0 rounded-md bg-white px-2 py-1.5">
+    <div className="min-w-0 overflow-hidden rounded-md bg-white px-2 py-1.5">
       <div className="text-[10px] uppercase text-[var(--muted)]">{label}</div>
-      <div className="truncate font-mono text-[11px]">{value}</div>
+      <div className="min-w-0 break-all font-mono text-[11px] leading-5">{value}</div>
     </div>
   );
 }
@@ -1462,6 +1658,92 @@ function formatBytes(value: number | null | undefined) {
   return `${(value / 1024).toFixed(1)} KB`;
 }
 
+function formatNumberOrNa(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "n/a";
+  }
+  return Math.round(value).toLocaleString();
+}
+
+function formatDuration(milliseconds: number) {
+  if (!Number.isFinite(milliseconds)) {
+    return "n/a";
+  }
+  if (milliseconds < 1000) {
+    return `${Math.max(0, Math.round(milliseconds))} ms`;
+  }
+  const seconds = milliseconds / 1000;
+  if (seconds < 60) {
+    return `${seconds.toFixed(seconds < 10 ? 1 : 0)} s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.round(seconds % 60);
+  return `${minutes}m ${remainingSeconds}s`;
+}
+
+function formatTimestamp(value: string | null | undefined) {
+  if (!value) {
+    return "n/a";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function totalNullableNumbers(values: Array<number | null | undefined>) {
+  const validValues = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (validValues.length === 0) {
+    return null;
+  }
+  return validValues.reduce((sum, value) => sum + value, 0);
+}
+
+function sumNumbers(records: Array<Record<string, unknown>>, key: string) {
+  return totalNullableNumbers(records.map((record) => numberValue(record[key])));
+}
+
+function latestNumber(records: Array<Record<string, unknown>>, key: string) {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const value = numberValue(records[index]?.[key]);
+    if (value !== null) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function numberValue(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function stringValue(value: unknown) {
+  if (typeof value === "string" && value.trim()) {
+    return value;
+  }
+  return null;
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values));
+}
+
+function titleCase(value: string) {
+  return value
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
 function truncateHash(value: string) {
   return value.length > 16 ? `${value.slice(0, 10)}...${value.slice(-6)}` : value;
 }
@@ -1496,9 +1778,9 @@ function EmptyPanel({ title }: { title: string }) {
 
 function ArtifactIcon({ type }: { type: string }) {
   if (type === "html") {
-    return <Code2 className="size-4 text-[var(--blue)]" />;
+    return <Code2 className="size-4 shrink-0 text-[var(--blue)]" />;
   }
-  return <FileText className="size-4 text-[var(--accent)]" />;
+  return <FileText className="size-4 shrink-0 text-[var(--accent)]" />;
 }
 
 function withFromSeq(streamUrl: string, fromSeq: number) {
@@ -1526,6 +1808,146 @@ function activityItemsByRunFromEvents(events: RunEventEnvelope[]) {
     itemsByRun[runId] = settleSwarmPlanItems(items);
   }
   return itemsByRun;
+}
+
+function runEventsByRunFromEvents(events: RunEventEnvelope[]): RunEventsByRun {
+  return events.reduce<RunEventsByRun>((eventsByRun, event) => appendRunEventByRun(eventsByRun, event), {});
+}
+
+function appendRunEventByRun(current: RunEventsByRun, event: RunEventEnvelope): RunEventsByRun {
+  const currentEvents = current[event.run_id] ?? [];
+  if (currentEvents.some((candidate) => candidate.id === event.id)) {
+    return current;
+  }
+  const nextEvents = [...currentEvents, event].sort((left, right) => left.seq - right.seq);
+  return { ...current, [event.run_id]: nextEvents };
+}
+
+function buildTurnRunSummary(
+  runId: string,
+  events: RunEventEnvelope[],
+  turn: ConversationTurn,
+  artifacts: ArtifactRecord[],
+): TurnRunSummary {
+  const sortedEvents = [...events].sort((left, right) => left.seq - right.seq);
+  const runStarted = sortedEvents.find((event) => event.type === "run.started");
+  const runTerminal = [...sortedEvents]
+    .reverse()
+    .find((event) => event.type === "run.completed" || event.type === "run.failed" || event.type === "run.cancelled");
+  const statusPayload = asPayload(runTerminal?.payload);
+  const startedAt = stringValue(asPayload(runStarted?.payload).started_at) ?? runStarted?.timestamp ?? sortedEvents[0]?.timestamp ?? null;
+  const endedAt =
+    runTerminal?.timestamp ??
+    stringValue(statusPayload.ended_at) ??
+    [...sortedEvents].reverse().find((event) => event.type === "message.completed")?.timestamp ??
+    null;
+  const modelEvents = sortedEvents.filter((event) => event.type.startsWith("model.call."));
+  const modelCompletedEvents = sortedEvents.filter((event) => event.type === "model.call.completed");
+  const responseModelEvents = modelCompletedEvents.filter(
+    (event) => asPayload(event.payload).purpose === "orchestrator_response",
+  );
+  const plannerModelEvents = modelCompletedEvents.filter(
+    (event) => asPayload(event.payload).purpose === "orchestrator_planner",
+  );
+  const toolTerminalEvents = sortedEvents.filter(
+    (event) => event.type === "tool.call.completed" || event.type === "tool.call.failed",
+  );
+  const artifactEvents = sortedEvents.filter((event) => event.type === "artifact.created");
+  const observationEvents = sortedEvents.filter(
+    (event) => event.type === "observation.created" || event.type === "observation.failed",
+  );
+  const tokenPayloads = modelCompletedEvents.map((event) => asPayload(event.payload));
+  const swarmPlanEvent = sortedEvents.find((event) => event.type === "swarm.plan");
+  const swarmPlanPayload = asPayload(swarmPlanEvent?.payload);
+  const branchTerminalEvents = sortedEvents.filter(
+    (event) => event.type === "swarm.branch.completed" || event.type === "swarm.branch.failed",
+  );
+  const completedBranches = branchTerminalEvents.filter((event) => event.type === "swarm.branch.completed").length;
+  const failedBranches = branchTerminalEvents.filter((event) => event.type === "swarm.branch.failed").length;
+  const sandboxSessionIds = uniqueStrings(
+    sortedEvents
+      .map((event) => stringValue(asPayload(event.payload).sandbox_session_id))
+      .filter((value): value is string => Boolean(value)),
+  );
+  const externalSandboxIds = uniqueStrings(
+    sortedEvents
+      .map((event) => stringValue(asPayload(event.payload).external_sandbox_id))
+      .filter((value): value is string => Boolean(value)),
+  );
+  const sandboxAgentEvents = sortedEvents.filter((event) => event.type === "sandbox.agent.event");
+
+  return {
+    runId,
+    status: stringValue(statusPayload.status) ?? runTerminal?.type.replace("run.", "") ?? "running",
+    startedAt,
+    endedAt,
+    durationMs: startedAt && endedAt ? Math.max(0, new Date(endedAt).getTime() - new Date(startedAt).getTime()) : null,
+    inputCharacters: turn.user ? messageText(turn.user).length : 0,
+    outputCharacters: turn.assistant ? messageText(turn.assistant).length : 0,
+    modelCalls: uniqueStrings(modelEvents.map((event) => stringValue(asPayload(event.payload).model_call_id) ?? event.trace?.span_id ?? event.id)).length,
+    responseModelCalls: responseModelEvents.length,
+    plannerModelCalls: plannerModelEvents.length,
+    maxOutputTokens: latestNumber(tokenPayloads, "max_output_tokens"),
+    contextMessages: latestNumber(tokenPayloads, "model_message_count"),
+    inputTokens: sumNumbers(tokenPayloads, "input_tokens"),
+    outputTokens: sumNumbers(tokenPayloads, "output_tokens"),
+    cacheReadTokens: sumNumbers(tokenPayloads, "cache_read_tokens"),
+    cacheWriteTokens: sumNumbers(tokenPayloads, "cache_write_tokens"),
+    cacheCreationTokens: sumNumbers(tokenPayloads, "cache_creation_tokens"),
+    toolCalls: toolTerminalEvents.length,
+    failedToolCalls: toolTerminalEvents.filter((event) => event.type === "tool.call.failed").length,
+    observations: observationEvents.length,
+    artifacts: Math.max(artifactEvents.length, artifacts.length),
+    swarm: swarmPlanEvent
+      ? {
+          branchCount: numberValue(swarmPlanPayload.branch_count ?? swarmPlanPayload.requested_branch_count),
+          completedBranches,
+          failedBranches,
+          effectiveConcurrency: numberValue(swarmPlanPayload.effective_concurrency),
+          maxConcurrency: numberValue(swarmPlanPayload.max_concurrency),
+          executionMode: stringValue(swarmPlanPayload.execution_mode),
+          batchCount: numberValue(swarmPlanPayload.batch_count),
+        }
+      : null,
+    sandboxes: {
+      total: sandboxSessionIds.length,
+      external: externalSandboxIds.length,
+      sessions: sandboxSessionIds,
+      externalIds: externalSandboxIds,
+    },
+    agentEvents: {
+      total: sandboxAgentEvents.length,
+      recent: sandboxAgentEvents.slice(-5).map((event) => {
+        const payload = asPayload(event.payload);
+        return {
+          branchId: stringValue(payload.branch_id) ?? "branch",
+          type: stringValue(payload.agent_event_type) ?? "event",
+          level: stringValue(payload.level) ?? "info",
+          message: stringValue(payload.message) ?? "",
+          timestamp: stringValue(payload.timestamp) ?? event.timestamp ?? null,
+        };
+      }),
+    },
+    branches: branchTerminalEvents
+      .map((event) => {
+        const payload = asPayload(event.payload);
+        const started = stringValue(payload.started_at);
+        const ended = stringValue(payload.ended_at);
+        const branchId = stringValue(payload.branch_id) ?? "branch";
+        return {
+          index: numberValue(payload.branch_index),
+          id: branchId,
+          title: titleCase(branchId.replace(/^branch_/, "")),
+          status: stringValue(payload.status) ?? (event.type === "swarm.branch.completed" ? "completed" : "failed"),
+          durationMs: started && ended ? Math.max(0, new Date(ended).getTime() - new Date(started).getTime()) : null,
+          sandboxSessionId: stringValue(payload.sandbox_session_id),
+          externalSandboxId: stringValue(payload.external_sandbox_id),
+          agentEventCount: numberValue(payload.agent_event_count),
+          artifactCount: Array.isArray(payload.artifact_ids) ? payload.artifact_ids.length : null,
+        };
+      })
+      .sort((left, right) => (left.index ?? 999) - (right.index ?? 999)),
+  };
 }
 
 function mergeRuntimeActivityItem(current: RuntimeActivityItem, next: RuntimeActivityItem): RuntimeActivityItem {
@@ -1591,7 +2013,12 @@ function activityItemFromEvent(event: RunEventEnvelope): RuntimeActivityItem | n
       id: `tool:${toolCallId}`,
       kind: "tool",
       title: `Tool call: ${toolName}`,
-      status: event.type === "tool.call.completed" || event.type === "tool.call.output" ? "completed" : "running",
+      status:
+        event.type === "tool.call.failed"
+          ? "failed"
+          : event.type === "tool.call.completed" || event.type === "tool.call.output"
+            ? "completed"
+            : "running",
       detail: String(payload.output_summary ?? payload.input_summary ?? "Calling external tool."),
       details: compactDetails([
         ["tool", toolName],
@@ -1616,9 +2043,11 @@ function activityItemFromEvent(event: RunEventEnvelope): RuntimeActivityItem | n
       id: `model:${modelCallId}`,
       kind: "model",
       title: `Model call: ${modelName}`,
-      status: event.type === "model.call.completed" ? "completed" : "running",
+      status: event.type === "model.call.failed" ? "failed" : event.type === "model.call.completed" ? "completed" : "running",
       detail:
-        event.type === "model.call.completed"
+        event.type === "model.call.failed"
+          ? String((payload.error as { message?: string } | undefined)?.message ?? "Model call failed.")
+          : event.type === "model.call.completed"
           ? `Completed. ${String(payload.output_summary ?? "").slice(0, 160)}`
           : `Context messages: ${String(payload.model_message_count ?? "?")}, max tokens: ${String(
               payload.max_output_tokens ?? "?",

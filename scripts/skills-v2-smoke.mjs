@@ -83,7 +83,7 @@ expect(
   "A use_skill action should persist a skill Observation with selection reason, manifest context, alternatives, and replan linkage.",
 );
 
-for (const skillName of ["web-research", "data-profiling", "report-generation", "trace-diagnostics"]) {
+for (const skillName of ["web-research", "data-profiling", "report-generation", "trace-diagnostics", "frontend-design"]) {
   const manifestPath = path.join(root, "skills", skillName, "skill.json");
   expect(`${skillName} manifest exists`, existsSync(manifestPath), manifestPath);
   if (!existsSync(manifestPath)) {
@@ -107,6 +107,20 @@ for (const skillName of ["web-research", "data-profiling", "report-generation", 
   );
 }
 
+const frontendSkill = JSON.parse(readFileSync(path.join(root, "skills", "frontend-design", "skill.json"), "utf8"));
+const frontendSkillMd = readProjectFile("skills/frontend-design/SKILL.md");
+expect(
+  "frontend-design skill encodes DataSwarm-specific design guidance",
+  frontendSkill.name === "frontend-design" &&
+    frontendSkill.purpose.includes("DataSwarm") &&
+    frontendSkill.preferredCapabilities.includes("trace_query") &&
+    frontendSkill.qualityChecks.some((check) => /long titles, ids, hashes/.test(check)) &&
+    /DataSwarm UI Principles/.test(frontendSkillMd) &&
+    /Swarm needs topology/.test(frontendSkillMd) &&
+    /Artifacts are inspectable objects/.test(frontendSkillMd),
+  JSON.stringify(frontendSkill),
+);
+
 expect("sqlite database exists", existsSync(dbPath), dbPath);
 if (existsSync(dbPath)) {
   const db = new DatabaseSync(dbPath, { readOnly: true });
@@ -115,11 +129,11 @@ if (existsSync(dbPath)) {
       .prepare(
         `SELECT name, status, metadata_json
          FROM skills
-         WHERE name IN ('web-research', 'data-profiling', 'report-generation', 'trace-diagnostics')
+         WHERE name IN ('web-research', 'data-profiling', 'report-generation', 'trace-diagnostics', 'frontend-design')
          ORDER BY name ASC`,
       )
       .all();
-    expect("skills are synced into SQLite", rows.length >= 4, JSON.stringify(rows));
+    expect("skills are synced into SQLite", rows.length >= 5, JSON.stringify(rows));
     const missingManifest = rows.filter((row) => !parseManifest(row.metadata_json)?.purpose);
     expect("synced skills include manifest metadata", missingManifest.length === 0, JSON.stringify(missingManifest));
   } finally {

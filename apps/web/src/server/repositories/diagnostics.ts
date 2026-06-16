@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { getDb } from "../storage/db";
 import { dataDir, resolveLocalUri } from "../storage/paths";
+import { getSandboxCapabilityPlaneHealth } from "../runtime/sandbox-tool-proxy";
 import { listObservedLogsForConversation } from "./logs";
 import { listSelfImprovementCandidates } from "./self-improvement";
 
@@ -45,6 +46,23 @@ type CanonicalVerificationReceiptSummary = {
   verificationCommands: string[];
   diagnosis: string[];
 };
+type CapabilityPlaneHealthSummary =
+  | ReturnType<typeof getSandboxCapabilityPlaneHealth>
+  | {
+      status: "failed";
+      runtimeProfile: string;
+      realProfile: boolean;
+      mockSignals: Record<string, unknown>;
+      mockContamination: boolean;
+      readiness: null;
+      capabilityPlane: null;
+      endpoints: null;
+      hardFailures: string[];
+      error: {
+        code: string;
+        message: string;
+      };
+    };
 
 export async function diagnoseConversation(conversationId: string) {
   const db = await getDb();
@@ -179,7 +197,7 @@ export async function diagnoseConversation(conversationId: string) {
 
   const artifacts = db
     .prepare(
-      `SELECT id, run_id, type, mime_type, title, status, storage_uri, preview_uri, created_at
+      `SELECT id, run_id, type, mime_type, title, status, storage_uri, preview_uri, metadata_json, created_at
        FROM artifacts
        WHERE conversation_id = ?
        ORDER BY created_at ASC`,
@@ -190,6 +208,7 @@ export async function diagnoseConversation(conversationId: string) {
     await Promise.all(runIds.map((runId) => listSelfImprovementCandidates(runId)))
   ).flat();
   const canonicalVerification = await readCanonicalVerificationSummary();
+  const capabilityPlaneHealth = buildCapabilityPlaneHealthSummary();
 
   return {
     conversation,
@@ -207,6 +226,7 @@ export async function diagnoseConversation(conversationId: string) {
       logs,
       selfImprovementCandidates,
       canonicalVerification,
+      capabilityPlaneHealth,
     }),
     messages: messages.map((message) => ({
       ...message,
@@ -249,10 +269,15 @@ export async function diagnoseConversation(conversationId: string) {
       metadata: parseJson(session.metadata_json),
       metadata_json: undefined,
     })),
-    artifacts,
+    artifacts: artifacts.map((artifact) => ({
+      ...artifact,
+      metadata: parseJson(artifact.metadata_json),
+      metadata_json: undefined,
+    })),
     logs,
     selfImprovementCandidates,
     canonicalVerification,
+    capabilityPlaneHealth,
   };
 }
 
@@ -279,6 +304,7 @@ function buildSummary(input: {
     verificationPlan: Record<string, unknown>;
   }>;
   canonicalVerification: CanonicalVerificationReceiptSummary;
+  capabilityPlaneHealth: CapabilityPlaneHealthSummary;
 }) {
   const eventTypes = new Map<string, number>();
   for (const event of input.events) {
@@ -312,7 +338,10 @@ function buildSummary(input: {
   const sandbox = buildSandboxSummary(input.sandboxSessions, input.events);
   const selfImprovement = buildSelfImprovementSummary(input.selfImprovementCandidates);
   const runtimeConsistency = buildRuntimeConsistencySummary(input.runs, input.events, input.traceSpans);
+  const swarmEvidence = buildSwarmEvidenceSummary(input.events, input.toolCalls, input.observations, input.artifacts);
   const canonicalVerification = input.canonicalVerification;
+  const capabilityPlaneHealth = input.capabilityPlaneHealth;
+  const finalAnswerEvidence = buildFinalAnswerEvidenceSummary(input.messages, input.observations, input.artifacts);
   const remediation = buildRemediationPlan({
     productHealth,
     qualityIssues,
@@ -320,7 +349,10 @@ function buildSummary(input: {
     sandbox,
     selfImprovement,
     runtimeConsistency,
+    swarmEvidence,
     canonicalVerification,
+    capabilityPlaneHealth,
+    finalAnswerEvidence,
   });
 
   return {
@@ -344,7 +376,10 @@ function buildSummary(input: {
     sandbox,
     selfImprovement,
     runtimeConsistency,
+    swarmEvidence,
     canonicalVerification,
+    capabilityPlaneHealth,
+    finalAnswerEvidence,
     remediation,
     failures,
     diagnosis: [
@@ -358,13 +393,731 @@ function buildSummary(input: {
       ...sandbox.diagnosis,
       ...selfImprovement.diagnosis,
       ...runtimeConsistency.diagnosis,
+      ...swarmEvidence.diagnosis,
       ...canonicalVerification.diagnosis,
+      ...capabilityPlaneHealthDiagnosis(capabilityPlaneHealth),
+      ...finalAnswerEvidence.diagnosis,
       remediation.length === 0
         ? "No structured remediation items generated."
         : `${remediation.length} structured remediation item(s) generated.`,
       failures.length === 0 ? "No failure markers detected." : `${failures.length} failure marker(s) detected.`,
     ],
   };
+}
+
+function buildSwarmEvidenceSummary(events: Row[], toolCalls: Row[], observations: Row[], artifacts: Row[]) {
+  const verifyEvents = events.filter((event) => String(event.event_type) === "swarm.verify");
+  const reduceEvents = events.filter((event) => String(event.event_type) === "swarm.reduce");
+  const artifactContextEvents = events.filter((event) => String(event.event_type) === "artifact.context.prepared");
+  const branchCompletedEvents = events.filter((event) => String(event.event_type) === "swarm.branch.completed");
+  const branchContractMaterializedEvents = events.filter((event) => String(event.event_type) === "swarm.branch.contract.materialized");
+  const branchFinalMaterializedEvents = events.filter((event) => String(event.event_type) === "swarm.branch.final.materialized");
+  const branchPayloads = branchCompletedEvents.map(payloadOf);
+  const branchQualitySignals = branchPayloads.map((payload) => recordOrEmpty(payload.quality_signals));
+  const fallbackActionCount = branchQualitySignals.reduce((sum, signal) => sum + (Number(signal.fallbackActionCount ?? 0) || 0), 0);
+  const degradedBranchCount = branchQualitySignals.filter((signal) => signal.degradedExecution === true || signal.fallbackPolicyStatus === "degraded").length;
+  const e2bSandboxSessions = branchPayloads.filter((payload) => String(payload.external_sandbox_id ?? "").length > 0);
+  const capabilityCompletedEvents = events.filter((event) => String(event.event_type) === "capability.invoke.completed");
+  const capabilityFailedEvents = events.filter((event) => String(event.event_type) === "capability.invoke.failed");
+  const proxyCompletedEvents = events.filter((event) => String(event.event_type) === "sandbox.tool_proxy.call.completed");
+  const proxyFailedEvents = events.filter((event) => String(event.event_type) === "sandbox.tool_proxy.call.failed");
+  const sandboxActionEvents = events.filter((event) => String(event.event_type).startsWith("sandbox.agent.action"));
+  const sandboxObservationEvents = events.filter((event) => String(event.event_type) === "sandbox.agent.observation");
+  const repairStartedEvents = events.filter((event) => String(event.event_type) === "sandbox.agent.action_repair_started");
+  const repairSucceededEvents = events.filter((event) => String(event.event_type) === "sandbox.agent.action_repair_succeeded");
+  const repairFailedEvents = events.filter((event) => String(event.event_type) === "sandbox.agent.action_repair_failed");
+  const finalArtifactEvents = events.filter((event) => String(event.event_type) === "swarm.final_artifact.created");
+  const latestVerifyPayload = payloadOf(verifyEvents.at(-1));
+  const latestReducePayload = payloadOf(reduceEvents.at(-1));
+  const reducerInputCoverage = recordOrEmpty(latestReducePayload.reducer_input_coverage);
+  const latestEventEvidence = recordOrEmpty(latestVerifyPayload.event_evidence);
+  const verificationGateCoverage = recordOrEmpty(latestVerifyPayload.gate_coverage);
+  const latestChecks = Array.isArray(latestVerifyPayload.checks) ? latestVerifyPayload.checks.filter(isRecord) : [];
+  const failedChecks = latestChecks.filter((check) => String(check.status) === "failed");
+  const requiredToolEventFailedCheckCount = failedChecks.filter((check) => String(check.id) === "required_tool_event_coverage").length;
+  const parentProxyFailedCheckCount = failedChecks.filter((check) => String(check.id) === "parent_proxy_event_coverage").length;
+  const branchFinalContentPresentFailedCheckCount = failedChecks.filter((check) => String(check.id) === "branch_final_content_present").length;
+  const successfulToolCallCoverageFailedCheckCount = failedChecks.filter((check) => String(check.id) === "successful_tool_call_coverage").length;
+  const capabilityEventCoverageFailedCheckCount = failedChecks.filter((check) => String(check.id) === "capability_event_coverage").length;
+  const parentProxyCoverageFailedCheckCount = failedChecks.filter((check) => String(check.id) === "parent_proxy_coverage").length;
+  const fallbackActionPolicyFailedCheckCount = failedChecks.filter((check) => String(check.id) === "fallback_action_policy").length;
+  const branchObservationMetadata = observations
+    .filter((observation) => String(observation.source_name ?? "").startsWith("swarm.branch."))
+    .map((observation) => parseJson(observation.metadata_json))
+    .filter(isRecord);
+  const branchContractCount = branchObservationMetadata.filter((metadata) => isRecord(metadata.branch_contract)).length;
+  const branchFinalCount = branchObservationMetadata.filter((metadata) => isRecord(metadata.branch_final)).length;
+  const branchFinalLimitationCount = branchObservationMetadata.reduce((sum, metadata) => {
+    const branchFinal = recordOrEmpty(metadata.branch_final);
+    return sum + (Array.isArray(branchFinal.limitations) ? branchFinal.limitations.length : 0);
+  }, 0);
+  const artifactMetadata = artifacts.map((artifact) => parseJson(artifact.metadata_json)).filter(isRecord);
+  const branchLinkedArtifactCount = artifactMetadata.filter((metadata) => arrayOfStrings(metadata.branchIds ?? metadata.branchId).length > 0).length;
+  const sourceObservationLinkedArtifactCount = artifactMetadata.filter((metadata) => arrayOfStrings(metadata.sourceObservationIds).length > 0).length;
+  const imageArtifactCount = artifacts.filter((artifact) => String(artifact.type) === "image").length;
+  const htmlArtifactCount = artifacts.filter((artifact) => String(artifact.type) === "html").length;
+  const markdownArtifactCount = artifacts.filter((artifact) => String(artifact.type) === "markdown").length;
+  const finalHtmlReportArtifactCount = artifactMetadata.filter((metadata) => String(metadata.artifactKind ?? "") === "final_html_report").length;
+  const finalHtmlReportSourceCoveredCount = artifactMetadata.filter(
+    (metadata) =>
+      String(metadata.artifactKind ?? "") === "final_html_report" &&
+      arrayOfStrings(metadata.sourceObservationIds).length > 0 &&
+      arrayOfStrings(metadata.sourceArtifactIds).length > 0,
+  ).length;
+  const toolStatusByName: Record<string, Record<string, number>> = {};
+  for (const call of toolCalls) {
+    const name = String(call.tool_name ?? "unknown");
+    const status = String(call.status ?? "unknown");
+    toolStatusByName[name] = toolStatusByName[name] ?? {};
+    toolStatusByName[name][status] = (toolStatusByName[name][status] ?? 0) + 1;
+  }
+  const traceQueryCalls = toolCalls.filter((call) => String(call.tool_name ?? "") === "trace.query");
+  const traceQueryResolution = {
+    callCount: traceQueryCalls.length,
+    activeConversationFallbackCount: traceQueryCalls.filter((call) => {
+      const metadata = recordOrEmpty(parseJson(call.metadata_json));
+      return recordOrEmpty(metadata.trace_query).usedActiveConversationFallback === true;
+    }).length,
+    unresolvedCurrentLiteralCount: traceQueryCalls.filter((call) => {
+      const metadata = recordOrEmpty(parseJson(call.metadata_json));
+      const traceQuery = recordOrEmpty(metadata.trace_query);
+      const resolvedConversationId = String(traceQuery.resolvedConversationId ?? "");
+      return ["current", "this", "active", "current_conversation"].includes(resolvedConversationId.trim().toLowerCase());
+    }).length,
+    resolvedConversationIds: uniqueStrings(
+      traceQueryCalls
+        .map((call) => {
+          const metadata = recordOrEmpty(parseJson(call.metadata_json));
+          return String(recordOrEmpty(metadata.trace_query).resolvedConversationId ?? "");
+        })
+        .filter(Boolean),
+    ),
+  };
+  const parentProxyCompletionCount = capabilityCompletedEvents.length + proxyCompletedEvents.length;
+  const parentProxyFailureCount = capabilityFailedEvents.length + proxyFailedEvents.length;
+  const traceReplayability = {
+    branchCompletedEventCount: branchCompletedEvents.length,
+    reduceEventCount: reduceEvents.length,
+    finalArtifactEventCount: finalArtifactEvents.length,
+    branchObservationIdCount: branchObservationMetadata.length,
+    artifactCount: artifacts.length,
+    capabilityOrProxyCompletionCount: parentProxyCompletionCount,
+    replayable:
+      branchCompletedEvents.length > 0 &&
+      reduceEvents.length > 0 &&
+      finalArtifactEvents.length > 0 &&
+      branchObservationMetadata.length > 0 &&
+      artifacts.length > 0,
+  };
+  const branchEvidenceMatrix = buildBranchEvidenceMatrix({
+    branchPayloads,
+    capabilityCompletedEvents,
+    capabilityFailedEvents,
+    proxyCompletedEvents,
+    proxyFailedEvents,
+    sandboxActionEvents,
+    sandboxObservationEvents,
+    branchContractMaterializedEvents,
+    branchFinalMaterializedEvents,
+    toolCalls,
+    observations,
+    artifacts,
+  });
+  const branchesMissingMinimumRealModelActions = branchEvidenceMatrix.filter(
+    (branch) => branch.minimumRealModelActions > 0 && branch.realModelActionCount < branch.minimumRealModelActions,
+  ).length;
+  const branchesMissingBranchContractMaterializedEvent = branchEvidenceMatrix.filter((branch) => !branch.hasBranchContractMaterializedEvent).length;
+  const branchesWithFallback = branchEvidenceMatrix.filter((branch) => branch.fallbackActionCount > 0 || branch.degraded).length;
+  const branchesWithoutParentProxyEvidence = branchEvidenceMatrix.filter((branch) => branch.parentProxyCompletionCount === 0).length;
+  const branchesWithoutArtifacts = branchEvidenceMatrix.filter((branch) => branch.artifactCount === 0).length;
+  const branchesMissingRequiredToolEvidence = branchEvidenceMatrix.filter((branch) =>
+    branch.requiredToolCoverage.some((coverage) => !coverage.hasCompletedParentEvidence),
+  ).length;
+  const branchesMissingMinimumEvidence = branchEvidenceMatrix.filter((branch) =>
+    branch.minimumEvidenceCoverage.some((coverage) => !coverage.passed),
+  ).length;
+  const branchesMissingFinalOutputSchema = branchEvidenceMatrix.filter((branch) =>
+    branch.finalOutputSchemaCoverage.some((coverage) => !coverage.passed),
+  ).length;
+  const branchesMissingBranchFinalMaterializedEvent = branchEvidenceMatrix.filter((branch) => !branch.hasBranchFinalMaterializedEvent).length;
+  const branchesMissingWebSearchObservationCoverage = branchEvidenceMatrix.filter(
+    (branch) => branch.webSearchObservationCoverage?.required === true && branch.webSearchObservationCoverage.passed !== true,
+  ).length;
+  const branchesMissingRunPythonImageArtifactCoverage = branchEvidenceMatrix.filter(
+    (branch) => branch.runPythonImageArtifactCoverage?.required === true && branch.runPythonImageArtifactCoverage.passed !== true,
+  ).length;
+  const branchesMissingMarkdownSummaryArtifactCoverage = branchEvidenceMatrix.filter(
+    (branch) => branch.markdownSummaryArtifactCoverage?.required === true && branch.markdownSummaryArtifactCoverage.passed !== true,
+  ).length;
+  const branchesMissingArtifactSourceObservationCoverage = branchEvidenceMatrix.filter((branch) =>
+    branch.artifactSourceObservationCoverage?.some((coverage) => coverage.passed !== true),
+  ).length;
+  const branchesWithUnsupportedClaims = branchEvidenceMatrix.filter((branch) => Number(branch.unsupportedClaimCount ?? 0) > 0).length;
+  const branchesWithoutEventRealModelActions = branchEvidenceMatrix.filter(
+    (branch) => branch.eventRealModelActionCount < branch.minimumRealModelActions,
+  ).length;
+  const diagnosis = [
+    verifyEvents.length > 0
+      ? `Swarm verify event(s) recorded: ${verifyEvents.length}; latest failed checks=${failedChecks.length}.`
+      : "No swarm.verify event recorded for this conversation.",
+    `Parent-proxy evidence: capability completed=${capabilityCompletedEvents.length}, proxy completed=${proxyCompletedEvents.length}, capability failed=${capabilityFailedEvents.length}, proxy failed=${proxyFailedEvents.length}.`,
+    `Branch evidence contracts/finals: contracts=${branchContractCount}, contractMaterializedEvents=${branchContractMaterializedEvents.length}, finals=${branchFinalCount}, finalMaterializedEvents=${branchFinalMaterializedEvents.length}, final limitations=${branchFinalLimitationCount}.`,
+    `Branch evidence matrix: branches=${branchEvidenceMatrix.length}, below-min-real-model-actions=${branchesMissingMinimumRealModelActions}, below-min-event-real-model-actions=${branchesWithoutEventRealModelActions}, missing-contract-materialized-event=${branchesMissingBranchContractMaterializedEvent}, missing-minimum-evidence=${branchesMissingMinimumEvidence}, missing-final-output-schema=${branchesMissingFinalOutputSchema}, missing-final-materialized-event=${branchesMissingBranchFinalMaterializedEvent}, missing-web-search-observation=${branchesMissingWebSearchObservationCoverage}, missing-run-python-image=${branchesMissingRunPythonImageArtifactCoverage}, missing-markdown-summary=${branchesMissingMarkdownSummaryArtifactCoverage}, missing-artifact-source-observation=${branchesMissingArtifactSourceObservationCoverage}, with-unsupported-claims=${branchesWithUnsupportedClaims}, with-fallback/degraded=${branchesWithFallback}, without-parent-proxy=${branchesWithoutParentProxyEvidence}, missing-required-tool-evidence=${branchesMissingRequiredToolEvidence}, without-artifacts=${branchesWithoutArtifacts}.`,
+    `Artifact coverage: image=${imageArtifactCount}, html=${htmlArtifactCount}, markdown=${markdownArtifactCount}, final-html-report=${finalHtmlReportArtifactCount}, final-html-source-covered=${finalHtmlReportSourceCoveredCount}, final-artifact-events=${finalArtifactEvents.length}, branch-linked=${branchLinkedArtifactCount}, sourceObservation-linked=${sourceObservationLinkedArtifactCount}.`,
+    `Trace replayability: replayable=${traceReplayability.replayable}, branchCompletedEvents=${traceReplayability.branchCompletedEventCount}, reduceEvents=${traceReplayability.reduceEventCount}, finalArtifactEvents=${traceReplayability.finalArtifactEventCount}, branchObservationIds=${traceReplayability.branchObservationIdCount}, artifacts=${traceReplayability.artifactCount}.`,
+    `Reducer input coverage: branchContracts=${Number(reducerInputCoverage.branchContractCount ?? 0)}, branchFinals=${Number(reducerInputCoverage.branchFinalCount ?? 0)}, branchObservations=${Number(reducerInputCoverage.branchObservationIdCount ?? 0)}, artifacts=${Number(reducerInputCoverage.artifactCount ?? 0)}, usesBranchFinals=${reducerInputCoverage.reducerUsesBranchFinals === true}.`,
+    `Trace query resolution: calls=${traceQueryResolution.callCount}, activeFallback=${traceQueryResolution.activeConversationFallbackCount}, unresolvedCurrentLiteral=${traceQueryResolution.unresolvedCurrentLiteralCount}.`,
+    `Verification gate coverage: complete=${verificationGateCoverage.complete === true}, presentExpected=${Number(verificationGateCoverage.presentExpectedGateCount ?? 0)}/${Number(verificationGateCoverage.expectedGateCount ?? 0)}, failed=${Number(verificationGateCoverage.failedGateCount ?? failedChecks.length)}.`,
+    `Artifact context carry-forward events=${artifactContextEvents.length}.`,
+    `Execution proof: real E2B branch payloads=${e2bSandboxSessions.length}, fallbackActionCount=${fallbackActionCount}, degradedBranchCount=${degradedBranchCount}.`,
+  ];
+  return {
+    reduceCount: reduceEvents.length,
+    swarmVerifyCount: verifyEvents.length,
+    artifactContextPreparedCount: artifactContextEvents.length,
+    latestArtifactContextPrepared: payloadOf(artifactContextEvents.at(-1)),
+    branchCompletedEventCount: branchCompletedEvents.length,
+    realE2bBranchPayloadCount: e2bSandboxSessions.length,
+    fallbackActionCount,
+    degradedBranchCount,
+    capabilityCompletedCount: capabilityCompletedEvents.length,
+    capabilityFailedCount: capabilityFailedEvents.length,
+    proxyCompletedCount: proxyCompletedEvents.length,
+    proxyFailedCount: proxyFailedEvents.length,
+    repairStartedEventCount: repairStartedEvents.length,
+    repairSucceededEventCount: repairSucceededEvents.length,
+    repairFailedEventCount: repairFailedEvents.length,
+    finalArtifactEventCount: finalArtifactEvents.length,
+    parentProxyCompletionCount,
+    parentProxyFailureCount,
+    traceReplayability,
+    reducerInputCoverage,
+    traceQueryResolution,
+    requiredToolEventFailedCheckCount,
+    parentProxyFailedCheckCount,
+    branchFinalContentPresentFailedCheckCount,
+    successfulToolCallCoverageFailedCheckCount,
+    capabilityEventCoverageFailedCheckCount,
+    parentProxyCoverageFailedCheckCount,
+    fallbackActionPolicyFailedCheckCount,
+    branchContractCount,
+    branchContractMaterializedEventCount: branchContractMaterializedEvents.length,
+    branchFinalCount,
+    branchFinalMaterializedEventCount: branchFinalMaterializedEvents.length,
+    branchFinalLimitationCount,
+    branchEvidenceMatrix,
+    branchesMissingMinimumRealModelActions,
+    branchesMissingBranchContractMaterializedEvent,
+    branchesWithFallback,
+    branchesWithoutParentProxyEvidence,
+    branchesMissingRequiredToolEvidence,
+    branchesMissingMinimumEvidence,
+    branchesMissingFinalOutputSchema,
+    branchesMissingBranchFinalMaterializedEvent,
+    branchesMissingWebSearchObservationCoverage,
+    branchesMissingRunPythonImageArtifactCoverage,
+    branchesMissingMarkdownSummaryArtifactCoverage,
+    branchesMissingArtifactSourceObservationCoverage,
+    branchesWithUnsupportedClaims,
+    branchesWithoutArtifacts,
+    branchesWithoutEventRealModelActions,
+    imageArtifactCount,
+    htmlArtifactCount,
+    markdownArtifactCount,
+    finalHtmlReportArtifactCount,
+    finalHtmlReportSourceCoveredCount,
+    branchLinkedArtifactCount,
+    sourceObservationLinkedArtifactCount,
+    latestEventEvidence,
+    verificationGateCoverage,
+    toolStatusByName,
+    failedVerifyChecks: failedChecks.map((check) => ({ id: check.id, detail: check.detail })),
+    diagnosis,
+  };
+}
+
+function buildBranchEvidenceMatrix(input: {
+  branchPayloads: Record<string, unknown>[];
+  capabilityCompletedEvents: Row[];
+  capabilityFailedEvents: Row[];
+  proxyCompletedEvents: Row[];
+  proxyFailedEvents: Row[];
+  sandboxActionEvents: Row[];
+  sandboxObservationEvents: Row[];
+  branchContractMaterializedEvents: Row[];
+  branchFinalMaterializedEvents: Row[];
+  toolCalls: Row[];
+  observations: Row[];
+  artifacts: Row[];
+}) {
+  const artifactRows = input.artifacts.map((artifact) => ({
+    id: String(artifact.id ?? ""),
+    type: String(artifact.type ?? ""),
+    metadata: recordOrEmpty(parseJson(artifact.metadata_json)),
+  }));
+  return input.branchPayloads.map((payload) => {
+    const branchId = String(payload.branch_id ?? "");
+    const qualitySignals = recordOrEmpty(payload.quality_signals);
+    const branchContract = recordOrEmpty(payload.branch_contract);
+    const branchFinal = recordOrEmpty(payload.branch_final);
+    const minimumEvidence = recordOrEmpty(branchContract.minimumEvidence);
+    const realModelActionCount = firstNumericField(qualitySignals, [
+      "realModelActionCount",
+      "real_model_action_count",
+      "modelActionCount",
+      "model_action_count",
+      "llmActionCount",
+    ]);
+    const fallbackActionCount = firstNumericField(qualitySignals, [
+      "fallbackActionCount",
+      "fallback_action_count",
+      "deterministicFallbackActionCount",
+      "deterministic_fallback_action_count",
+    ]);
+    const repairedActionCount = firstNumericField(qualitySignals, ["repairedActionCount", "repairCount", "repaired_action_count"]);
+    const unrepairedActionCount = firstNumericField(qualitySignals, ["unrepairedActionCount", "unrepaired_action_count"]);
+    const toolCallSuccessCount = firstNumericField(qualitySignals, [
+      "toolCallSuccessCount",
+      "tool_call_success_count",
+      "successfulToolCallCount",
+      "successful_tool_call_count",
+    ]);
+    const toolCallFailureCount = firstNumericField(qualitySignals, [
+      "toolCallFailureCount",
+      "tool_call_failure_count",
+      "failedToolCallCount",
+      "failed_tool_call_count",
+    ]);
+    const minimumRealModelActions = Number(minimumEvidence.realModelActionCount ?? 0) || 0;
+    const branchArtifacts = arrayOfRecords(payload.branch_artifacts);
+    const parentCapabilityArtifacts = arrayOfRecords(payload.parent_capability_artifacts);
+    const artifactIds = uniqueStrings([
+      ...arrayOfStrings(payload.artifact_ids),
+      ...branchArtifacts.map((artifact) => String(artifact.id ?? "")).filter(Boolean),
+      ...parentCapabilityArtifacts.map((artifact) => String(artifact.id ?? "")).filter(Boolean),
+    ]);
+    const artifactTypes = uniqueStrings([
+      ...branchArtifacts.map((artifact) => String(artifact.type ?? "")).filter(Boolean),
+      ...parentCapabilityArtifacts.map((artifact) => String(artifact.type ?? "")).filter(Boolean),
+      ...artifactRows
+        .filter((artifact) => artifactHasBranch(artifact.metadata, branchId))
+        .map((artifact) => artifact.type)
+        .filter(Boolean),
+    ]);
+    const linkedArtifactRows = artifactRows.filter(
+      (artifact) => artifactIds.includes(artifact.id) || artifactHasBranch(artifact.metadata, branchId),
+    );
+    const artifactTypeOccurrences = [
+      ...branchArtifacts.map((artifact) => String(artifact.type ?? "")).filter(Boolean),
+      ...parentCapabilityArtifacts.map((artifact) => String(artifact.type ?? "")).filter(Boolean),
+      ...linkedArtifactRows.map((artifact) => artifact.type).filter(Boolean),
+    ];
+    const sourceObservationLinkedArtifactCount = linkedArtifactRows.filter(
+      (artifact) => arrayOfStrings(artifact.metadata.sourceObservationIds).length > 0,
+    ).length;
+    const runtimeSummaryArtifactCount = linkedArtifactRows.filter(
+      (artifact) =>
+        String(artifact.metadata.artifactKind ?? "") === "branch_runtime_summary" ||
+        String(recordOrEmpty(artifact.metadata.qualitySignals).substanceStatus ?? "") === "runtime_summary",
+    ).length;
+    const thinTextArtifactCount = linkedArtifactRows.filter(
+      (artifact) => String(recordOrEmpty(artifact.metadata.qualitySignals).substanceStatus ?? "") === "thin",
+    ).length;
+    const deliverableEligibleArtifactCount = linkedArtifactRows.filter(
+      (artifact) => recordOrEmpty(artifact.metadata.qualitySignals).deliverableEligible === true,
+    ).length;
+    const observationIds = uniqueStrings([
+      String(payload.observation_id ?? ""),
+      ...input.observations
+        .filter((observation) => {
+          const metadata = recordOrEmpty(parseJson(observation.metadata_json));
+          return String(metadata.branch_id ?? "") === branchId || String(observation.source_name ?? "") === `swarm.branch.${branchId}`;
+        })
+        .map((observation) => String(observation.id ?? "")),
+    ]).filter(Boolean);
+    const proxyCompleted = countEventsForBranch([...input.capabilityCompletedEvents, ...input.proxyCompletedEvents], branchId);
+    const proxyFailed = countEventsForBranch([...input.capabilityFailedEvents, ...input.proxyFailedEvents], branchId);
+    const parentProxyEventEvidence = [
+      ...eventEvidenceForBranch(input.capabilityCompletedEvents, branchId),
+      ...eventEvidenceForBranch(input.proxyCompletedEvents, branchId),
+      ...eventEvidenceForBranch(input.capabilityFailedEvents, branchId),
+      ...eventEvidenceForBranch(input.proxyFailedEvents, branchId),
+    ];
+    const toolCallEvidence = toolCallEvidenceForBranch(input.toolCalls, branchId);
+    const requiredTools = arrayOfStrings(branchContract.requiredTools);
+    const requiredArtifacts = arrayOfRecords(branchContract.requiredArtifacts);
+    const requiredArtifactTypes = requiredArtifacts.map((artifact) => String(artifact.type ?? "")).filter(Boolean);
+    const requiredToolCoverage = requiredTools.map((toolName) => ({
+      toolName,
+      hasCompletedToolCall: toolCallEvidence.some((call) => call.toolName === toolName && call.status === "completed"),
+      hasCompletedCapabilityEvent: parentProxyEventEvidence.some(
+        (event) => event.toolName === toolName && event.status === "completed" && event.eventType.startsWith("capability.invoke."),
+      ),
+      hasCompletedProxyEvent: parentProxyEventEvidence.some(
+        (event) => event.toolName === toolName && event.status === "completed" && event.eventType.startsWith("sandbox.tool_proxy.call."),
+      ),
+      hasCompletedParentEvidence:
+        toolCallEvidence.some((call) => call.toolName === toolName && call.status === "completed") ||
+        parentProxyEventEvidence.some((event) => event.toolName === toolName && event.status === "completed"),
+    }));
+    const completedToolCallForTool = (toolName: string) =>
+      toolCallEvidence.some((call) => call.toolName === toolName && call.status === "completed" && String(call.id ?? "").length > 0);
+    const completedParentEventsForTool = (toolName: string) =>
+      parentProxyEventEvidence.filter((event) => event.toolName === toolName && event.status === "completed");
+    const completedParentToolCallRefForTool = (toolName: string) =>
+      completedParentEventsForTool(toolName).some((event) => String(event.toolCallId ?? "").length > 0);
+    const completedParentObservationForTool = (toolName: string) =>
+      completedParentEventsForTool(toolName).some((event) => String(event.observationId ?? "").length > 0);
+    const branchActionEventPayloads = input.sandboxActionEvents
+      .map((event) => ({ ...payloadOf(event), eventType: String(event.event_type ?? "") }))
+      .filter((event) => String(event.branchId ?? event.branch_id ?? "") === branchId);
+    const branchObservationEventPayloads = input.sandboxObservationEvents
+      .map(payloadOf)
+      .filter((event) => String(event.branchId ?? event.branch_id ?? "") === branchId);
+    const eventRealModelActionCount = branchActionEventPayloads.filter(
+      (event) => String(event.actionSource ?? event.action_source ?? "") === "real_model" && String(event.status ?? "") === "proposed",
+    ).length;
+    const eventMockModelActionCount = branchActionEventPayloads.filter(
+      (event) => String(event.actionSource ?? event.action_source ?? "") === "mock_model" && String(event.status ?? "") === "proposed",
+    ).length;
+    const eventFallbackActionCount = branchActionEventPayloads.filter(
+      (event) => String(event.actionSource ?? event.action_source ?? "") === "deterministic_fallback" && String(event.status ?? "") === "proposed",
+    ).length;
+    const eventRepairedActionCount = branchActionEventPayloads.filter(
+      (event) => String(event.status ?? "") === "repaired" || event.repaired === true,
+    ).length;
+    const repairStartedEventCount = branchActionEventPayloads.filter(
+      (event) => String(event.eventType ?? event.event_type ?? "") === "sandbox.agent.action_repair_started",
+    ).length;
+    const repairSucceededEventCount = branchActionEventPayloads.filter(
+      (event) => String(event.eventType ?? event.event_type ?? "") === "sandbox.agent.action_repair_succeeded",
+    ).length;
+    const repairFailedEventCount = branchActionEventPayloads.filter(
+      (event) => String(event.eventType ?? event.event_type ?? "") === "sandbox.agent.action_repair_failed",
+    ).length;
+    const branchContractMaterializedEventCount = countEventsForBranch(input.branchContractMaterializedEvents, branchId);
+    const branchFinalMaterializedEventCount = countEventsForBranch(input.branchFinalMaterializedEvents, branchId);
+    const completedToolEvidenceCount = completedToolEvidenceForBranch(toolCallEvidence, parentProxyEventEvidence);
+    const webSearchEvidenceCount = completedToolEvidenceForBranch(toolCallEvidence, parentProxyEventEvidence, "web.search");
+    const imageArtifactCount = artifactTypeOccurrences.filter((type) => type === "image").length;
+    const htmlArtifactCount = artifactTypeOccurrences.filter((type) => type === "html").length;
+    const markdownArtifactCount = artifactTypeOccurrences.filter((type) => type === "markdown").length;
+    const substantiveMarkdownArtifactCount = linkedArtifactRows.filter((artifact) => {
+      if (artifact.type !== "markdown") {
+        return false;
+      }
+      const qualitySignals = recordOrEmpty(artifact.metadata.qualitySignals);
+      const substanceStatus = String(qualitySignals.substanceStatus ?? "substantive");
+      return String(artifact.metadata.artifactKind ?? "") !== "branch_runtime_summary" && substanceStatus !== "runtime_summary" && substanceStatus !== "thin";
+    }).length;
+    const webSearchObservationCoverage = {
+      required: requiredTools.includes("web.search"),
+      hasCompletedToolCall: completedToolCallForTool("web.search"),
+      hasCompletedParentToolCallRef: completedParentToolCallRefForTool("web.search"),
+      hasCompletedObservationEvent: completedParentObservationForTool("web.search"),
+      passed:
+        !requiredTools.includes("web.search") ||
+        ((completedToolCallForTool("web.search") || completedParentToolCallRefForTool("web.search")) &&
+          completedParentObservationForTool("web.search")),
+    };
+    const runPythonImageArtifactCoverage = {
+      required: requiredTools.includes("run_python") || requiredArtifactTypes.includes("image"),
+      hasCompletedRunPythonEvidence:
+        completedToolCallForTool("run_python") || completedParentEventsForTool("run_python").length > 0,
+      imageArtifactCount,
+      passed:
+        !(requiredTools.includes("run_python") || requiredArtifactTypes.includes("image")) ||
+        ((completedToolCallForTool("run_python") || completedParentEventsForTool("run_python").length > 0) &&
+          imageArtifactCount > 0),
+    };
+    const markdownSummaryArtifactCoverage = {
+      required: requiredArtifactTypes.includes("markdown"),
+      markdownArtifactCount,
+      substantiveMarkdownArtifactCount,
+      runtimeSummaryArtifactCount,
+      thinTextArtifactCount,
+      passed: !requiredArtifactTypes.includes("markdown") || substantiveMarkdownArtifactCount > 0,
+    };
+    const artifactSourceObservationCoverage = requiredArtifactTypes.map((artifactType) => {
+      const matchingArtifacts = linkedArtifactRows.filter((artifact) =>
+        diagnosticArtifactMatchesRequiredType(artifact, artifactType),
+      );
+      const sourceLinkedArtifacts = matchingArtifacts.filter(
+        (artifact) => arrayOfStrings(artifact.metadata.sourceObservationIds).length > 0,
+      );
+      return {
+        artifactType,
+        artifactCount: matchingArtifacts.length,
+        sourceObservationLinkedArtifactCount: sourceLinkedArtifacts.length,
+        passed: sourceLinkedArtifacts.length > 0,
+      };
+    });
+    const minimumEvidenceCoverage = buildMinimumEvidenceCoverage(minimumEvidence, {
+      realModelActionCount: Math.max(realModelActionCount, eventRealModelActionCount),
+      toolCallCount: Math.max(toolCallSuccessCount, completedToolEvidenceCount),
+      webSearchCount: webSearchEvidenceCount,
+      imageArtifactCount,
+      htmlArtifactCount,
+      markdownArtifactCount,
+    });
+    const finalOutputSchema = recordOrEmpty(branchContract.finalOutputSchema);
+    const finalOutputSchemaCoverage = buildFinalOutputSchemaCoverage(finalOutputSchema, branchFinal);
+    const unsupportedClaims = arrayOfStrings(branchFinal.unsupportedClaims ?? branchFinal.unsupported_claims);
+    const degraded =
+      qualitySignals.degradedExecution === true ||
+      qualitySignals.fallbackPolicyStatus === "degraded" ||
+      fallbackActionCount > 0;
+    return {
+      branchId,
+      title: String(branchContract.title ?? payload.branch_title ?? payload.output_summary ?? branchId),
+      status: String(payload.status ?? "unknown"),
+      executionMode: String(payload.execution_mode ?? "unknown"),
+      externalSandboxId: String(payload.external_sandbox_id ?? ""),
+      hasRealE2bSandbox: String(payload.external_sandbox_id ?? "").length > 0,
+      hasBranchContract: Object.keys(branchContract).length > 0,
+      hasBranchContractMaterializedEvent: branchContractMaterializedEventCount > 0,
+      branchContractMaterializedEventCount,
+      hasBranchFinal: Object.keys(branchFinal).length > 0,
+      hasBranchFinalMaterializedEvent: branchFinalMaterializedEventCount > 0,
+      branchFinalMaterializedEventCount,
+      realModelActionCount,
+      eventRealModelActionCount,
+      eventMockModelActionCount,
+      eventFallbackActionCount,
+      minimumRealModelActions,
+      meetsMinimumRealModelActions:
+        minimumRealModelActions === 0 ||
+        realModelActionCount >= minimumRealModelActions ||
+        eventRealModelActionCount >= minimumRealModelActions,
+      fallbackActionCount,
+      repairedActionCount,
+      unrepairedActionCount,
+      eventRepairedActionCount,
+      repairStartedEventCount,
+      repairSucceededEventCount,
+      repairFailedEventCount,
+      minimumEvidence,
+      minimumEvidenceCoverage,
+      finalOutputSchema,
+      finalOutputSchemaCoverage,
+      sandboxAgentObservationEventCount: branchObservationEventPayloads.length,
+      sandboxAgentFailedObservationEventCount: branchObservationEventPayloads.filter((event) => String(event.status ?? "") === "failed").length,
+      degraded,
+      toolCallSuccessCount,
+      toolCallFailureCount,
+      parentProxyCompletionCount: proxyCompleted,
+      parentProxyFailureCount: proxyFailed,
+      parentProxyEventEvidence,
+      toolCallEvidence,
+      requiredTools,
+      requiredToolCoverage,
+      webSearchObservationCoverage,
+      runPythonImageArtifactCoverage,
+      markdownSummaryArtifactCoverage,
+      artifactSourceObservationCoverage,
+      artifactCount: artifactIds.length,
+      artifactIds,
+      artifactTypes,
+      imageArtifactCount,
+      htmlArtifactCount,
+      markdownArtifactCount,
+      sourceObservationLinkedArtifactCount,
+      runtimeSummaryArtifactCount,
+      thinTextArtifactCount,
+      deliverableEligibleArtifactCount,
+      observationIds,
+      unsupportedClaimCount: unsupportedClaims.length,
+      unsupportedClaims,
+    };
+  });
+}
+
+function firstNumericField(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = Number(record[key]);
+    if (Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return 0;
+}
+
+function countEventsForBranch(events: Row[], branchId: string) {
+  return events.filter((event) => branchIdFromPayload(payloadOf(event)) === branchId).length;
+}
+
+function eventEvidenceForBranch(events: Row[], branchId: string) {
+  return events
+    .map((event) => {
+      const payload = payloadOf(event);
+      return {
+        eventType: String(event.event_type ?? ""),
+        status: eventStatusFromType(String(event.event_type ?? "")),
+        branchId: branchIdFromPayload(payload),
+        toolName: toolNameFromPayload(payload),
+        observationId: String(payload.observation_id ?? payload.observationId ?? ""),
+        toolCallId: String(payload.tool_call_id ?? payload.toolCallId ?? ""),
+      };
+    })
+    .filter((event) => event.branchId === branchId);
+}
+
+function toolCallEvidenceForBranch(toolCalls: Row[], branchId: string) {
+  return toolCalls
+    .map((call) => {
+      const metadata = recordOrEmpty(parseJson(call.metadata_json));
+      return {
+        id: String(call.id ?? ""),
+        status: String(call.status ?? "unknown"),
+        toolName: String(call.tool_name ?? "unknown"),
+        branchId: branchIdFromPayload(metadata),
+      };
+    })
+    .filter((call) => call.branchId === branchId);
+}
+
+function branchIdFromPayload(payload: Record<string, unknown>) {
+  return String(payload.branch_id ?? payload.branchId ?? "");
+}
+
+function toolNameFromPayload(payload: Record<string, unknown>) {
+  return String(payload.tool_name ?? payload.toolName ?? payload.capability_name ?? payload.capabilityName ?? payload.name ?? "");
+}
+
+function diagnosticArtifactMatchesRequiredType(
+  artifact: { type: string; mime_type?: string; metadata: Record<string, unknown> },
+  requiredType: string,
+) {
+  const artifactKind = String(artifact.metadata.artifactKind ?? "");
+  const mimeType = String(artifact.mime_type ?? "");
+  if (requiredType === "image") {
+    return artifact.type === "image" || /^image\//i.test(mimeType);
+  }
+  if (requiredType === "html") {
+    return artifact.type === "html" || /html/i.test(mimeType) || artifactKind === "final_html_report" || artifactKind === "html_document";
+  }
+  if (requiredType === "markdown") {
+    return artifact.type === "markdown" || /markdown/i.test(mimeType) || artifactKind === "branch_final_report" || artifactKind === "markdown_document";
+  }
+  if (requiredType === "json") {
+    return artifact.type === "json" || /json/i.test(mimeType) || artifactKind === "structured_json";
+  }
+  if (requiredType === "image_metadata") {
+    return artifact.type === "json" && artifactKind === "image_metadata";
+  }
+  return artifact.type === requiredType;
+}
+
+function eventStatusFromType(eventType: string) {
+  const parts = eventType.split(".");
+  return parts.at(-1) ?? "unknown";
+}
+
+function completedToolEvidenceForBranch(
+  toolCalls: Array<{ toolName: string; status: string }>,
+  parentProxyEvents: Array<{ toolName: string; status: string }>,
+  toolName?: string,
+) {
+  const completedToolCalls = toolCalls.filter(
+    (call) => call.status === "completed" && (!toolName || call.toolName === toolName),
+  ).length;
+  const completedParentEvents = parentProxyEvents.filter(
+    (event) => event.status === "completed" && (!toolName || event.toolName === toolName),
+  ).length;
+  return Math.max(completedToolCalls, completedParentEvents);
+}
+
+function buildMinimumEvidenceCoverage(minimumEvidence: Record<string, unknown>, actual: Record<string, number>) {
+  return [
+    "realModelActionCount",
+    "toolCallCount",
+    "webSearchCount",
+    "imageArtifactCount",
+    "htmlArtifactCount",
+    "markdownArtifactCount",
+  ]
+    .map((field) => {
+      const required = Number(minimumEvidence[field] ?? 0) || 0;
+      return {
+        field,
+        required,
+        actual: Number(actual[field] ?? 0) || 0,
+        passed: required <= 0 || (Number(actual[field] ?? 0) || 0) >= required,
+      };
+    })
+    .filter((coverage) => coverage.required > 0);
+}
+
+function buildFinalOutputSchemaCoverage(finalOutputSchema: Record<string, unknown>, branchFinal: Record<string, unknown>) {
+  const sections = arrayOfRecords(branchFinal.sections);
+  const claims = arrayOfRecords(branchFinal.claims);
+  const sectionTitles = sections.map((section) => String(section.title ?? "").toLowerCase());
+  const requiredSectionCoverage = arrayOfStrings(finalOutputSchema.requiredSections).map((requiredSection) => {
+    const normalized = requiredSection.toLowerCase();
+    return {
+      field: "requiredSections",
+      required: requiredSection,
+      actual: sectionTitles.join(", "),
+      passed: normalized.length > 0 && sectionTitles.some((title) => title.length > 0 && (title.includes(normalized) || normalized.includes(title))),
+    };
+  });
+  const hasObservationIds =
+    arrayOfStrings(branchFinal.evidenceObservationIds).length > 0 ||
+    sections.some((section) => arrayOfStrings(section.evidenceObservationIds).length > 0) ||
+    claims.some((claim) => arrayOfStrings(claim.evidenceObservationIds).length > 0);
+  const hasArtifactIds =
+    arrayOfStrings(branchFinal.artifactIds).length > 0 ||
+    sections.some((section) => arrayOfStrings(section.evidenceArtifactIds).length > 0) ||
+    claims.some((claim) => arrayOfStrings(claim.evidenceArtifactIds).length > 0);
+  const unsupportedClaims = arrayOfStrings(branchFinal.unsupportedClaims ?? branchFinal.unsupported_claims);
+  const citationCoverage = [
+    {
+      field: "mustCiteObservationIds",
+      required: finalOutputSchema.mustCiteObservationIds === true,
+      actual: hasObservationIds,
+      passed: finalOutputSchema.mustCiteObservationIds !== true || hasObservationIds,
+    },
+    {
+      field: "mustCiteArtifactIds",
+      required: finalOutputSchema.mustCiteArtifactIds === true,
+      actual: hasArtifactIds,
+      passed: finalOutputSchema.mustCiteArtifactIds !== true || hasArtifactIds,
+    },
+    {
+      field: "unsupportedClaimPolicy",
+      required: String(finalOutputSchema.unsupportedClaimPolicy ?? ""),
+      actual: unsupportedClaims.length,
+      passed: String(finalOutputSchema.unsupportedClaimPolicy ?? "") !== "fail_verification" || unsupportedClaims.length === 0,
+    },
+  ];
+  return [...requiredSectionCoverage, ...citationCoverage];
+}
+
+function artifactHasBranch(metadata: Record<string, unknown>, branchId: string) {
+  return uniqueStrings([
+    ...arrayOfStrings(metadata.branchIds),
+    ...arrayOfStrings(metadata.branchId),
+    typeof metadata.branchId === "string" ? metadata.branchId : "",
+  ]).includes(branchId);
+}
+
+function arrayOfRecords(value: unknown) {
+  return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
+function payloadOf(event: Row | undefined) {
+  if (!event) {
+    return {};
+  }
+  const parsed = parseJson(event.payload_json);
+  if (isRecord(parsed) && isRecord(parsed.payload)) {
+    return parsed.payload;
+  }
+  return isRecord(parsed) ? parsed : {};
+}
+
+function recordOrEmpty(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
 }
 
 function buildRemediationPlan(input: {
@@ -374,7 +1127,10 @@ function buildRemediationPlan(input: {
   sandbox: ReturnType<typeof buildSandboxSummary>;
   selfImprovement: ReturnType<typeof buildSelfImprovementSummary>;
   runtimeConsistency: ReturnType<typeof buildRuntimeConsistencySummary>;
+  swarmEvidence: ReturnType<typeof buildSwarmEvidenceSummary>;
   canonicalVerification: CanonicalVerificationReceiptSummary;
+  capabilityPlaneHealth: CapabilityPlaneHealthSummary;
+  finalAnswerEvidence: ReturnType<typeof buildFinalAnswerEvidenceSummary>;
 }) {
   const items: RemediationItem[] = [];
 
@@ -441,6 +1197,27 @@ function buildRemediationPlan(input: {
     });
   }
 
+  if (input.capabilityPlaneHealth.status !== "ready" || input.capabilityPlaneHealth.hardFailures.length > 0) {
+    items.push({
+      id: "capability-plane-health",
+      category: "sandbox_e2b",
+      severity: input.capabilityPlaneHealth.realProfile ? "high" : "medium",
+      title: "Repair capability plane health before trusting real E2B branch tool use",
+      evidence: [
+        `runtimeProfile=${input.capabilityPlaneHealth.runtimeProfile}`,
+        `status=${input.capabilityPlaneHealth.status}`,
+        `hardFailures=${input.capabilityPlaneHealth.hardFailures.join(", ") || "none"}`,
+      ],
+      recommendedAction:
+        "Start DataSwarm through the real tunnel profile, remove mock/degraded env contamination, and verify the public parent proxy plus required V4 capabilities before launching a complex E2B swarm.",
+      verificationCommands: [
+        "npm run dev:real",
+        "curl -fsS https://dataswarm-dev.metad.ai/api/internal/sandbox/health",
+        "node scripts/e2b-readiness-smoke.mjs",
+      ],
+    });
+  }
+
   if (input.sandbox.liveSmokeUnverifiedCount > 0 || input.observations.liveSmokeUnverifiedCount > 0) {
     items.push({
       id: "e2b-live-smoke-receipt",
@@ -459,6 +1236,153 @@ function buildRemediationPlan(input: {
         "node scripts/e2b-live-receipt-smoke.mjs",
         "node scripts/e2b-sandbox-smoke.mjs",
       ]),
+    });
+  }
+
+  if (input.swarmEvidence.swarmVerifyCount > 0 && input.swarmEvidence.parentProxyCompletionCount === 0) {
+    items.push({
+      id: "swarm-parent-proxy-evidence",
+      category: "swarm_verification",
+      severity: "high",
+      title: "Require parent-proxy evidence before trusting swarm verification",
+      evidence: [
+        `swarmVerifyCount=${input.swarmEvidence.swarmVerifyCount}`,
+        `parentProxyCompletionCount=${input.swarmEvidence.parentProxyCompletionCount}`,
+        `requiredToolEventFailedChecks=${input.swarmEvidence.requiredToolEventFailedCheckCount}`,
+        `successfulToolCallCoverageFailedChecks=${input.swarmEvidence.successfulToolCallCoverageFailedCheckCount}`,
+        `capabilityEventCoverageFailedChecks=${input.swarmEvidence.capabilityEventCoverageFailedCheckCount}`,
+        `parentProxyCoverageFailedChecks=${input.swarmEvidence.parentProxyCoverageFailedCheckCount}`,
+      ],
+      recommendedAction:
+        "Rerun a real parent-proxy swarm and require capability.invoke/sandbox.tool_proxy completion events plus completed tool_call rows for required tools.",
+      verificationCommands: ["node scripts/parent-tool-proxy-smoke.mjs", "node scripts/e2b-parent-proxy-smoke.mjs"],
+    });
+  }
+
+  if (
+    input.swarmEvidence.swarmVerifyCount > 0 &&
+    input.swarmEvidence.verificationGateCoverage?.complete === false
+  ) {
+    items.push({
+      id: "swarm-verification-gate-coverage",
+      category: "swarm_verification",
+      severity: "high",
+      title: "Require complete V4.1 swarm.verify gate coverage",
+      evidence: [
+        `expectedGateCount=${Number(input.swarmEvidence.verificationGateCoverage?.expectedGateCount ?? 0)}`,
+        `presentExpectedGateCount=${Number(input.swarmEvidence.verificationGateCoverage?.presentExpectedGateCount ?? 0)}`,
+        `missingGateIds=${arrayOfStrings(input.swarmEvidence.verificationGateCoverage?.missingGateIds).join(",") || "none"}`,
+      ],
+      recommendedAction:
+        "Do not accept swarm.verify as V4.1 evidence until gate_coverage.complete=true and all expected hard gates are present.",
+      verificationCommands: ["node scripts/e2b-complex-benchmark-smoke.mjs"],
+    });
+  }
+
+  if (Number(input.swarmEvidence.traceQueryResolution?.unresolvedCurrentLiteralCount ?? 0) > 0) {
+    items.push({
+      id: "trace-query-current-resolution",
+      category: "swarm_verification",
+      severity: "high",
+      title: "Resolve trace.query current conversation aliases before repository lookup",
+      evidence: [
+        `traceQueryCallCount=${input.swarmEvidence.traceQueryResolution.callCount}`,
+        `activeConversationFallbackCount=${input.swarmEvidence.traceQueryResolution.activeConversationFallbackCount}`,
+        `unresolvedCurrentLiteralCount=${input.swarmEvidence.traceQueryResolution.unresolvedCurrentLiteralCount}`,
+      ],
+      recommendedAction:
+        "Ensure trace.query calls with conversation_id=current/active/this are rewritten to the active conversationId before diagnoseConversation or repository lookup.",
+      verificationCommands: ["node scripts/parent-tool-proxy-smoke.mjs"],
+    });
+  }
+
+  if (
+    input.swarmEvidence.reduceCount > 0 &&
+    input.swarmEvidence.reducerInputCoverage?.reducerUsesBranchFinals !== true
+  ) {
+    items.push({
+      id: "swarm-reducer-input-coverage",
+      category: "swarm_verification",
+      severity: "high",
+      title: "Ensure reducer uses BranchFinal evidence instead of runtime summaries",
+      evidence: [
+        `reduceCount=${input.swarmEvidence.reduceCount}`,
+        `branchContractCount=${Number(input.swarmEvidence.reducerInputCoverage?.branchContractCount ?? 0)}`,
+        `branchFinalCount=${Number(input.swarmEvidence.reducerInputCoverage?.branchFinalCount ?? 0)}`,
+        `branchObservationIdCount=${Number(input.swarmEvidence.reducerInputCoverage?.branchObservationIdCount ?? 0)}`,
+        `artifactCount=${Number(input.swarmEvidence.reducerInputCoverage?.artifactCount ?? 0)}`,
+        `reducerUsesBranchFinals=${input.swarmEvidence.reducerInputCoverage?.reducerUsesBranchFinals === true}`,
+      ],
+      recommendedAction:
+        "Do not accept swarm.reduce output until BranchFinal records are present and reducer_input_coverage shows reducerUsesBranchFinals=true.",
+      verificationCommands: ["node scripts/e2b-complex-benchmark-smoke.mjs"],
+    });
+  }
+
+  if (
+    input.swarmEvidence.branchEvidenceMatrix.length > 0 &&
+    (input.swarmEvidence.branchesMissingMinimumRealModelActions > 0 ||
+      input.swarmEvidence.branchesMissingBranchContractMaterializedEvent > 0 ||
+      input.swarmEvidence.branchesWithFallback > 0 ||
+      input.swarmEvidence.branchesWithoutParentProxyEvidence > 0 ||
+      input.swarmEvidence.branchesMissingRequiredToolEvidence > 0 ||
+      input.swarmEvidence.branchesMissingMinimumEvidence > 0 ||
+      input.swarmEvidence.branchesMissingFinalOutputSchema > 0 ||
+      input.swarmEvidence.branchesMissingBranchFinalMaterializedEvent > 0 ||
+      input.swarmEvidence.branchesMissingWebSearchObservationCoverage > 0 ||
+      input.swarmEvidence.branchesMissingRunPythonImageArtifactCoverage > 0 ||
+      input.swarmEvidence.branchesMissingMarkdownSummaryArtifactCoverage > 0 ||
+      input.swarmEvidence.branchesMissingArtifactSourceObservationCoverage > 0 ||
+      input.swarmEvidence.branchesWithUnsupportedClaims > 0 ||
+      input.swarmEvidence.branchesWithoutArtifacts > 0)
+  ) {
+    items.push({
+      id: "swarm-branch-evidence-matrix",
+      category: "swarm_verification",
+      severity: "high",
+      title: "Close per-branch ReAct evidence gaps before accepting complex E2B benchmark",
+      evidence: [
+        `branches=${input.swarmEvidence.branchEvidenceMatrix.length}`,
+        `below-min-real-model-actions=${input.swarmEvidence.branchesMissingMinimumRealModelActions}`,
+        `below-min-event-real-model-actions=${input.swarmEvidence.branchesWithoutEventRealModelActions}`,
+        `missing-contract-materialized-event=${input.swarmEvidence.branchesMissingBranchContractMaterializedEvent}`,
+        `branch-final-content-present-failed-checks=${input.swarmEvidence.branchFinalContentPresentFailedCheckCount}`,
+        `fallback-action-policy-failed-checks=${input.swarmEvidence.fallbackActionPolicyFailedCheckCount}`,
+        `with-fallback/degraded=${input.swarmEvidence.branchesWithFallback}`,
+        `without-parent-proxy=${input.swarmEvidence.branchesWithoutParentProxyEvidence}`,
+        `missing-required-tool-evidence=${input.swarmEvidence.branchesMissingRequiredToolEvidence}`,
+        `missing-minimum-evidence=${input.swarmEvidence.branchesMissingMinimumEvidence}`,
+        `missing-final-output-schema=${input.swarmEvidence.branchesMissingFinalOutputSchema}`,
+        `missing-final-materialized-event=${input.swarmEvidence.branchesMissingBranchFinalMaterializedEvent}`,
+        `missing-web-search-observation=${input.swarmEvidence.branchesMissingWebSearchObservationCoverage}`,
+        `missing-run-python-image=${input.swarmEvidence.branchesMissingRunPythonImageArtifactCoverage}`,
+        `missing-markdown-summary=${input.swarmEvidence.branchesMissingMarkdownSummaryArtifactCoverage}`,
+        `missing-artifact-source-observation=${input.swarmEvidence.branchesMissingArtifactSourceObservationCoverage}`,
+        `with-unsupported-claims=${input.swarmEvidence.branchesWithUnsupportedClaims}`,
+        `without-artifacts=${input.swarmEvidence.branchesWithoutArtifacts}`,
+      ],
+      recommendedAction:
+        "Rerun the complex E2B swarm only after every branch has the required real_model action count, zero normal-path fallback, parent-proxy completion evidence, and branch-linked artifact coverage.",
+      verificationCommands: ["node scripts/e2b-parent-proxy-smoke.mjs", "node scripts/e2b-complex-benchmark-smoke.mjs"],
+    });
+  }
+
+  if (!input.finalAnswerEvidence.hasObservationCitation || !input.finalAnswerEvidence.hasArtifactCitation) {
+    items.push({
+      id: "final-answer-evidence-citations",
+      category: "swarm_verification",
+      severity: input.swarmEvidence.swarmVerifyCount > 0 ? "high" : "medium",
+      title: "Ensure final answer cites persisted Observation and Artifact evidence",
+      evidence: [
+        `latestAssistantMessageId=${input.finalAnswerEvidence.latestAssistantMessageId || "missing"}`,
+        `hasObservationCitation=${input.finalAnswerEvidence.hasObservationCitation}`,
+        `hasArtifactCitation=${input.finalAnswerEvidence.hasArtifactCitation}`,
+        `persistedObservationCount=${input.finalAnswerEvidence.persistedObservationCount}`,
+        `persistedArtifactCount=${input.finalAnswerEvidence.persistedArtifactCount}`,
+      ],
+      recommendedAction:
+        "Regenerate or patch the final answer so it cites persisted Observation IDs and Artifact IDs from the completed swarm evidence chain.",
+      verificationCommands: ["node scripts/trace-diagnostics-sandbox-smoke.mjs", "node scripts/swarm-verifier-smoke.mjs"],
     });
   }
 
@@ -515,6 +1439,115 @@ function buildRemediationPlan(input: {
   }
 
   return items;
+}
+
+function buildFinalAnswerEvidenceSummary(messages: Row[], observations: Row[], artifacts: Row[]) {
+  const assistantMessages = messages.filter((message) => String(message.role) === "assistant");
+  const latestAssistant = assistantMessages.at(-1);
+  const latestText = latestAssistant ? messageText(latestAssistant) : "";
+  const persistedObservationIds = uniqueStrings(observations.map((observation) => String(observation.id ?? "")));
+  const persistedArtifactIds = uniqueStrings(artifacts.map((artifact) => String(artifact.id ?? "")));
+  const citedObservationIds = persistedObservationIds.filter((id) => latestText.includes(id));
+  const citedArtifactIds = persistedArtifactIds.filter((id) => latestText.includes(id));
+  const artifactPreviewIds = latestAssistant ? extractArtifactPreviewIds(parseJson(latestAssistant.parts_json)) : [];
+  const allCitedArtifactIds = uniqueStrings([...citedArtifactIds, ...artifactPreviewIds.filter((id) => persistedArtifactIds.includes(id))]);
+  const hasObservationCitation = persistedObservationIds.length === 0 || citedObservationIds.length > 0;
+  const hasArtifactCitation = persistedArtifactIds.length === 0 || allCitedArtifactIds.length > 0;
+  const finalAnswerEvidenceCoverage = {
+    id: "final_answer_evidence_coverage",
+    passed: hasObservationCitation && hasArtifactCitation,
+    hasObservationCitation,
+    hasArtifactCitation,
+    citedObservationCount: citedObservationIds.length,
+    persistedObservationCount: persistedObservationIds.length,
+    citedArtifactCount: allCitedArtifactIds.length,
+    persistedArtifactCount: persistedArtifactIds.length,
+  };
+  return {
+    latestAssistantMessageId: latestAssistant ? String(latestAssistant.id ?? "") : "",
+    latestAssistantTextLength: latestText.length,
+    persistedObservationCount: persistedObservationIds.length,
+    persistedArtifactCount: persistedArtifactIds.length,
+    citedObservationIds,
+    citedArtifactIds: allCitedArtifactIds,
+    missingObservationCitationCount: hasObservationCitation ? 0 : persistedObservationIds.length,
+    missingArtifactCitationCount: hasArtifactCitation ? 0 : persistedArtifactIds.length,
+    hasObservationCitation,
+    hasArtifactCitation,
+    final_answer_evidence_coverage: finalAnswerEvidenceCoverage,
+    finalAnswerEvidenceCoverage,
+    diagnosis: [
+      `Final answer evidence citations: observations=${citedObservationIds.length}/${persistedObservationIds.length}, artifacts=${allCitedArtifactIds.length}/${persistedArtifactIds.length}.`,
+    ],
+  };
+}
+
+function messageText(message: Row) {
+  const parts = parseJson(message.parts_json);
+  if (!Array.isArray(parts)) {
+    return "";
+  }
+  return parts
+    .map((part) => {
+      if (!isRecord(part)) {
+        return "";
+      }
+      if (part.type === "text" && typeof part.text === "string") {
+        return part.text;
+      }
+      if (part.type === "artifact_preview") {
+        return String(part.artifact_id ?? part.artifactId ?? "");
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function extractArtifactPreviewIds(parts: unknown) {
+  if (!Array.isArray(parts)) {
+    return [];
+  }
+  return uniqueStrings(
+    parts
+      .filter(isRecord)
+      .filter((part) => part.type === "artifact_preview")
+      .map((part) => String(part.artifact_id ?? part.artifactId ?? "")),
+  );
+}
+
+function buildCapabilityPlaneHealthSummary(): CapabilityPlaneHealthSummary {
+  try {
+    return getSandboxCapabilityPlaneHealth();
+  } catch (error) {
+    const runtimeProfile = process.env.DATASWARM_RUNTIME_PROFILE || "unspecified";
+    return {
+      status: "failed",
+      runtimeProfile,
+      realProfile: runtimeProfile.startsWith("real"),
+      mockSignals: {},
+      mockContamination: false,
+      readiness: null,
+      capabilityPlane: null,
+      endpoints: null,
+      hardFailures: ["capability_plane_health_runtime_guard_failed"],
+      error: {
+        code: "capability_plane_health_runtime_guard_failed",
+        message: error instanceof Error ? error.message : "Capability plane health check failed.",
+      },
+    };
+  }
+}
+
+function capabilityPlaneHealthDiagnosis(health: CapabilityPlaneHealthSummary) {
+  if (health.status === "ready" && health.hardFailures.length === 0) {
+    return [`Capability plane health ready for runtime profile ${health.runtimeProfile}.`];
+  }
+  return [
+    `Capability plane health failed for runtime profile ${health.runtimeProfile}: ${
+      health.hardFailures.join(", ") || "unknown failure"
+    }.`,
+  ];
 }
 
 function buildSandboxSummary(sandboxSessions: Row[], events: Row[]) {

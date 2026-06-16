@@ -3,12 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "DATASWARM_SANDBOX_PROVIDER=e2b DATASWARM_SANDBOX_AGENT_MODEL=real DATASWARM_SANDBOX_TOOL_PROXY=parent DATASWARM_SANDBOX_ALLOW_MODEL_SECRETS=1 DATASWARM_SANDBOX_AGENT_MODEL_NAME=deepseek-v4-flash DATASWARM_DATA_DIR=../../data DATASWARM_WORKSPACE_ROOT=../.. DATASWARM_PUBLIC_BASE_URL=http://127.0.0.1:3000 DATASWARM_SANDBOX_TOOL_PROXY_URL_FILE=../../data/e2b/parent-proxy-url.txt DATASWARM_SANDBOX_CAPABILITY_INVOKE_URL_FILE=../../data/e2b/capability-invoke-url.txt next dev",
-    "dev:mock": "DATASWARM_MOCK_MODEL=1 DATASWARM_MOCK_TOOLS=1 DATASWARM_SANDBOX_PROVIDER=mock DATASWARM_DATA_DIR=../../data DATASWARM_WORKSPACE_ROOT=../.. next dev",
+    "dev": "node ../../scripts/dev-real-cloudflare-tunnel.mjs",
+    "dev:mock": "DATASWARM_ALLOW_EXPLICIT_MOCK=1 DATASWARM_RUNTIME_PROFILE=mock-dev DATASWARM_MOCK_MODEL=1 DATASWARM_MOCK_TOOLS=1 DATASWARM_WEB_SEARCH_PROVIDER=mock DATASWARM_SANDBOX_PROVIDER=mock DATASWARM_DATA_DIR=../../data DATASWARM_WORKSPACE_ROOT=../.. next dev",
     "build": "DATASWARM_DATA_DIR=../../data DATASWARM_WORKSPACE_ROOT=../.. next build",
     "start": "DATASWARM_DATA_DIR=../../data DATASWARM_WORKSPACE_ROOT=../.. next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "dev:real": "node ../../scripts/dev-real-cloudflare-tunnel.mjs",
+    "dev:local-real": "node ../../scripts/dev-real.mjs",
+    "dev:tunnel": "node ../../scripts/dev-real-cloudflare-tunnel.mjs"
   },
   "dependencies": {
     "@e2b/code-interpreter": "^2.6.0",

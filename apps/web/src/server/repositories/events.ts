@@ -129,7 +129,11 @@ function redactPayload(payload: unknown): unknown {
         return value
           .replace(/sk-[A-Za-z0-9_-]{8,}/g, "[REDACTED_SECRET]")
           .replace(/e2b_[a-f0-9]{40}/gi, "[REDACTED_SECRET]")
-          .replace(/tvly-[A-Za-z0-9_-]{8,}/g, "[REDACTED_SECRET]");
+          .replace(/tvly-[A-Za-z0-9_-]{8,}/g, "[REDACTED_SECRET]")
+          .replace(/FAKE_SECRET_DO_NOT_USE_[A-Za-z0-9_]+/gi, "[REDACTED_SECRET]")
+          .replace(/(?:openai[_-]?(?:key|token)?[_-]?)?[a-z0-9_-]{8,}/gi, (match) => {
+            return /openai/i.test(match) ? "[REDACTED_SECRET]" : match;
+          });
       }
       return value;
     }),

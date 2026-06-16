@@ -63,6 +63,23 @@ expect(
 );
 
 expect(
+  "verifier checks sandbox V3 quality signals",
+  /sandbox_react_quality_signals/.test(verifier) &&
+    /fallbackPolicyStatus/.test(verifier) &&
+    /failed_verification/.test(verifier) &&
+    /realModelActionCount/.test(verifier),
+  "Verifier should make real-model action coverage and degraded fallback visible in swarm.verify.",
+);
+
+expect(
+  "verifier checks recovered artifact type coverage",
+  /recovered_artifact_type_coverage/.test(verifier) &&
+    /Requested deliverables are missing recovered artifact type/.test(verifier) &&
+    /markdown\/html/.test(verifier),
+  "Verifier should fail requested image/report deliverables when recovered artifact types are missing.",
+);
+
+expect(
   "verification summary remains deterministic",
   /failedChecks\.length > 0 \? "failed"/.test(verifier) &&
     /warningChecks\.length > 0 \? "warning"/.test(verifier) &&

@@ -34,6 +34,8 @@ Start the app:
 npm run dev
 ```
 
+Default `npm run dev` is real execution mode (`DATASWARM_MOCK_MODEL` unset, `DATASWARM_SANDBOX_PROVIDER=e2b`).
+
 Open:
 
 ```text

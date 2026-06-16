@@ -60,6 +60,7 @@ class MockModelProvider implements ModelProvider {
         !hasSkillObservation &&
         /skill smoke|use_skill smoke|trace-diagnostics skill|使用.*skill|启用.*skill|选择.*skill/i.test(latestTask);
       const shouldSearch = /搜索|联网|查询|新闻|来源|最新|recent|latest|前几部|表现|口碑|评分|播放量|进展/i.test(latestTask);
+      const mockSwarmBranches = shouldSwarm ? buildMockSwarmBranches(latestTask) : [];
       const action = hasSwarmObservation
         ? {
             action: {
@@ -91,25 +92,13 @@ class MockModelProvider implements ModelProvider {
               type: "spawn_swarm",
               objective: buildMockSearchQuery(latestTask) || "Run a deterministic mock swarm task.",
               strategy: "parallel_branch_then_merge",
-              branchCount: 3,
-              branchRoles: ["research", "analysis", "validation"],
-              branches: [
-                {
-                  title: "Research Branch",
-                  instruction: `Gather task-specific facts, inputs, and evidence for: ${latestTask}`,
-                  modelProfile: "deepseek:deepseek-v4-pro",
-                },
-                {
-                  title: "Analysis Branch",
-                  instruction: `Analyze trade-offs, risks, and implementation implications for: ${latestTask}`,
-                  modelProfile: "deepseek:deepseek-v4-flash",
-                },
-                {
-                  title: "Validation Branch",
-                  instruction: `Design verification checks, acceptance criteria, and failure signals for: ${latestTask}`,
-                  modelProfile: "deepseek:deepseek-v4-pro",
-                },
-              ],
+              branchCount: mockSwarmBranches.length,
+              branchRoles: mockSwarmBranches.map((branch) => branch.role),
+              branches: mockSwarmBranches.map((branch) => ({
+                title: branch.title,
+                instruction: branch.instruction,
+                modelProfile: branch.modelProfile,
+              })),
               contextRefs: [],
               sandboxRequired: true,
             },
@@ -204,8 +193,87 @@ function buildMockSwarmFinalAnswer(content: string) {
   return `Swarm branch execution completed. I synthesized the available branch observations instead of spawning another swarm cycle.${evidenceLine}`;
 }
 
+function buildMockSwarmBranches(latestTask: string) {
+  const roles = [
+    {
+      role: "research",
+      title: "Research Branch",
+      instruction: `Gather task-specific facts, inputs, and evidence for: ${latestTask}`,
+      modelProfile: "deepseek:deepseek-v4-pro",
+    },
+    {
+      role: "analysis",
+      title: "Analysis Branch",
+      instruction: `Analyze trade-offs, risks, and implementation implications for: ${latestTask}`,
+      modelProfile: "deepseek:deepseek-v4-flash",
+    },
+    {
+      role: "validation",
+      title: "Validation Branch",
+      instruction: `Design verification checks, acceptance criteria, and failure signals for: ${latestTask}`,
+      modelProfile: "deepseek:deepseek-v4-pro",
+    },
+    {
+      role: "implementation",
+      title: "Implementation Branch",
+      instruction: `Map concrete execution steps, dependencies, and deliverables for: ${latestTask}`,
+      modelProfile: "deepseek:deepseek-v4-flash",
+    },
+    {
+      role: "risk",
+      title: "Risk Branch",
+      instruction: `Identify operational, quality, cost, and reliability risks for: ${latestTask}`,
+      modelProfile: "deepseek:deepseek-v4-pro",
+    },
+    {
+      role: "synthesis",
+      title: "Synthesis Branch",
+      instruction: `Prepare a concise synthesis structure and merge criteria for: ${latestTask}`,
+      modelProfile: "deepseek:deepseek-v4-flash",
+    },
+    {
+      role: "data",
+      title: "Data Branch",
+      instruction: `List data inputs, evidence coverage, and missing data signals for: ${latestTask}`,
+      modelProfile: "deepseek:deepseek-v4-pro",
+    },
+    {
+      role: "report",
+      title: "Report Branch",
+      instruction: `Draft report sections, artifact expectations, and audience-specific output checks for: ${latestTask}`,
+      modelProfile: "deepseek:deepseek-v4-flash",
+    },
+    {
+      role: "review",
+      title: "Review Branch",
+      instruction: `Review branch quality criteria, unsupported-claim risks, and acceptance gates for: ${latestTask}`,
+      modelProfile: "deepseek:deepseek-v4-pro",
+    },
+    {
+      role: "finalization",
+      title: "Finalization Branch",
+      instruction: `Define final handoff, verification receipts, and next-action recommendations for: ${latestTask}`,
+      modelProfile: "deepseek:deepseek-v4-flash",
+    },
+  ] as const;
+  return roles.slice(0, inferMockSwarmBranchCount(latestTask));
+}
+
+function inferMockSwarmBranchCount(latestTask: string) {
+  if (/(?:10|十).{0,24}(?:并行|并发|沙箱|sandbox|branch)|(?:并行|并发).{0,24}(?:10|十)/i.test(latestTask)) {
+    return 10;
+  }
+  if (/(?:6|六).{0,24}(?:并行|并发|沙箱|sandbox|branch)|(?:并行|并发).{0,24}(?:6|六)/i.test(latestTask)) {
+    return 6;
+  }
+  return 3;
+}
+
 function pickMockSkillName(content: string) {
   const lower = extractLatestUserText(content).toLowerCase();
+  if (lower.includes("frontend-design") || lower.includes("frontend design") || /界面|前端|ui|ux|视觉|交互/.test(lower)) {
+    return "frontend-design";
+  }
   if (lower.includes("web-research") || lower.includes("web research")) {
     return "web-research";
   }

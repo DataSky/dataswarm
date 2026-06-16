@@ -175,6 +175,20 @@ function assertStaticRuntimeInvariants() {
     "planner parse/validation failures should leave durable trace evidence",
   );
   expect(
+    "planner recovers first balanced JSON value from noisy model output",
+    /function extractFirstBalancedJsonValue/.test(planner) &&
+      /findJsonStart/.test(planner) &&
+      /JSON\.parse\(balanced\)/.test(planner),
+    "planner parsing should tolerate a valid JSON action followed by extra prose or another JSON object.",
+  );
+  expect(
+    "failed runs settle assistant message state",
+    /status: "failed"/.test(orchestrator) &&
+      /message\.completed/.test(orchestrator) &&
+      /Run failed:/.test(orchestrator),
+    "runtime failures should not leave the assistant message permanently streaming.",
+  );
+  expect(
     "terminal tool events carry observation evidence",
     /type: "tool\.call\.completed"[\s\S]*?observation_id: observation\.id[\s\S]*?evidence_level: observation\.evidenceLevel/.test(orchestrator) &&
       /type: "tool\.call\.failed"[\s\S]*?observation_id: observation\.id[\s\S]*?evidence_level: observation\.evidenceLevel/.test(orchestrator) &&
@@ -350,10 +364,11 @@ function assertStaticRuntimeInvariants() {
   );
   expect(
     "swarm uses planner-provided branch definitions before runtime fallback",
-    /SwarmActionBranchDefinition/.test(agenticTypes) &&
+      /SwarmActionBranchDefinition/.test(agenticTypes) &&
       /normalizeSwarmBranches/.test(planner) &&
       /validateSwarmBranches/.test(planner) &&
-      /branches: \[/.test(modelProvider) &&
+      /buildMockSwarmBranches/.test(modelProvider) &&
+      /branches: mockSwarmBranches\.map/.test(modelProvider) &&
       /buildSwarmPlan\(objective: string, action\?: SpawnAgentAction \| SpawnSwarmAction\)/.test(swarm) &&
       /planSource: "model_branches"/.test(swarm) &&
       /planSource: "runtime_fallback"/.test(swarm) &&

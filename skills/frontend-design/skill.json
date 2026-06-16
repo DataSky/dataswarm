@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "dataswarm.skill.v1",
+  "name": "frontend-design",
+  "version": "0.1.0",
+  "purpose": "Guide distinctive, usable, and verifiable DataSwarm interface design for chat, artifacts, trace, skills, projects, settings, and swarm execution views.",
+  "activationGuidance": [
+    "Use when the user asks to design, redesign, critique, polish, or diagnose frontend UI, UX, layout, typography, visual style, interaction states, or product copy.",
+    "Use when changing DataSwarm conversation flow, artifact preview, trace pages, skills/projects/settings management, swarm branch visualization, or runtime cards.",
+    "Use before implementing broad UI changes so the planner can establish a concrete design direction, quality bar, and verification checklist.",
+    "Do not use for backend-only runtime, database, sandbox, or tool adapter work unless the change affects what users see or control."
+  ],
+  "requiredTools": [],
+  "preferredCapabilities": ["trace_query", "artifact_preview", "file_read"],
+  "inputContract": {
+    "requires": ["target surface or user-facing workflow", "problem statement or design objective"],
+    "optional": ["existing screenshot", "conversation id", "artifact id", "brand constraints", "viewport constraints", "accessibility requirements"]
+  },
+  "outputContract": {
+    "expectedObservations": ["design plan", "UI implementation notes", "verification checklist"],
+    "finalAnswerRequirements": [
+      "state the concrete surface being designed",
+      "explain the design direction and the tradeoffs",
+      "include responsive, overflow, accessibility, and interaction-state verification",
+      "separate confirmed UI defects from aesthetic recommendations when diagnosing an existing screen"
+    ]
+  },
+  "qualityChecks": [
+    "design decisions are specific to DataSwarm's agentic workspace rather than generic SaaS styling",
+    "layout preserves stable conversation flow, fixed navigation, bounded artifact previews, and readable runtime cards",
+    "long titles, ids, hashes, tool payloads, tables, code blocks, and iframes cannot expand outside their containers",
+    "states for idle, running, streaming, completed, failed, empty, disabled, hover, focus, and loading are accounted for",
+    "keyboard focus, contrast, reduced motion, mobile width, and desktop density are explicitly considered",
+    "final UI copy uses user-recognizable product language instead of internal implementation jargon"
+  ],
+  "riskLevel": "low",
+  "tags": ["frontend", "design", "ui", "ux", "artifacts", "trace", "swarm"]
+}

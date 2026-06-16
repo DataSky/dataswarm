@@ -45,6 +45,31 @@ expect(
 );
 
 expect(
+  "artifact drawer clamps to the viewport",
+  /w-full max-w-\[440px\]/.test(conversationUi) &&
+    /min-w-0 flex-col overflow-hidden/.test(conversationUi) &&
+    /sm:w-\[440px\]/.test(conversationUi),
+  "Artifact drawer should not be widened by long titles, hashes, run ids, or provenance ids.",
+);
+
+expect(
+  "artifact list rows protect long metadata",
+  /grid-cols-\[minmax\(0,1fr\)_auto\]/.test(conversationUi) &&
+    /min-w-0 flex-1 truncate text-sm font-medium/.test(conversationUi) &&
+    /shrink-0 whitespace-nowrap/.test(conversationUi),
+  "Artifact list rows should truncate long labels while keeping compact metadata aligned.",
+);
+
+expect(
+  "artifact details wrap unbounded identifiers",
+  /function ArtifactMeta/.test(conversationUi) &&
+    /min-w-0 break-all font-mono text-\[11px\]/.test(conversationUi) &&
+    /function KeyValueLine/.test(conversationUi) &&
+    /min-w-0 break-all text-\[var\(--foreground\)\]/.test(conversationUi),
+  "Artifact detail metadata and provenance should wrap long ids instead of expanding the drawer.",
+);
+
+expect(
   "swarm image e2e verifies quality signals through the API",
   /conversation artifacts API exposes artifact quality signals/.test(swarmImageSmoke) &&
     /sourceObservationCount === branchObservations\.length/.test(swarmImageSmoke) &&

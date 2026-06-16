@@ -1,7 +1,9 @@
+import { readFile } from "node:fs/promises";
 import { createAgentSession, updateAgentSessionStatus } from "../repositories/agent-sessions";
 import { getConversation } from "../repositories/conversations";
 import { completeAssistantMessage, createAssistantMessage } from "../repositories/messages";
 import { getModelProfile } from "../repositories/model-profiles";
+import { getArtifact, listArtifacts } from "../repositories/artifacts";
 import { logServer, textPreview } from "../observability/logger";
 import { completeTask, getRun, isRunCancelRequested, updateRunStatus } from "../repositories/runs";
 import { createAgentAction, updateAgentActionStatus } from "../repositories/agent-actions";
@@ -17,6 +19,7 @@ import { evaluateRunAndRecommend } from "./evaluator";
 import { publishRunEvent } from "./event-bus";
 import { callPlannerModel } from "./planner";
 import { executeSwarm } from "./swarm";
+import { resolveLocalUri } from "../storage/paths";
 
 export async function runOrchestrator(runId: string) {
   const run = await getRun(runId);
@@ -64,9 +67,18 @@ export async function runOrchestrator(runId: string) {
     await assertRunNotCancelled(runId);
 
     const conversation = await getConversation(run.conversationId);
-    const conversationMessages = toChatMessages(conversation?.messages ?? []);
+    const conversationMessagesRaw = conversation?.messages ?? [];
+    const conversationMessages = toChatMessages(conversationMessagesRaw);
     const latestUserIndex = findLastUserMessageIndex(conversationMessages);
-    const latestUserMessage = latestUserIndex >= 0 ? conversationMessages[latestUserIndex].content : "";
+    const rawLatestUserMessage = latestUserIndex >= 0 ? conversationMessages[latestUserIndex].content : "";
+    const explicitArtifactContextIds = collectArtifactContextIds(conversationMessagesRaw, latestUserIndex);
+    const artifactContextIds = await collectConversationArtifactContextIds(
+      run.conversationId,
+      explicitArtifactContextIds,
+      rawLatestUserMessage,
+    );
+    const artifactContext = await loadArtifactContext(artifactContextIds);
+    const latestUserMessage = appendArtifactContext(rawLatestUserMessage, artifactContext);
     const modelHistory = trimChatHistory(conversationMessages.slice(0, Math.max(latestUserIndex, 0)));
     const dateContext = currentDateContext();
     const observations: Observation[] = [];
@@ -83,10 +95,26 @@ export async function runOrchestrator(runId: string) {
       conversationMessageCount: conversationMessages.length,
       modelHistoryCount: modelHistory.length,
       latestUserIndex,
+      artifactContextCount: artifactContextIds.length,
       toolCapabilityCount: toolCapabilities.length,
       availableSkillCount: availableSkills.length,
       activeSkillNames: activeSkills.map((skill) => skill.name),
       ...textPreview(latestUserMessage),
+    });
+
+    await publishRunEvent({
+      runId,
+      conversationId: run.conversationId,
+      taskId: run.taskId,
+      type: "artifact.context.prepared",
+      producer: { kind: "orchestrator", id: agent.id, name: "Artifact Context Manager" },
+      payload: {
+        explicit_artifact_context_ids: explicitArtifactContextIds,
+        artifact_context_ids: artifactContextIds,
+        artifact_context_count: artifactContextIds.length,
+        injected_context_chars: artifactContext.length,
+        selection_policy: "explicit_refs_then_relevance_scored_recent_conversation_artifacts",
+      },
     });
 
     const assistantMessage = await createAssistantMessage({
@@ -467,13 +495,18 @@ export async function runOrchestrator(runId: string) {
           claims: swarmResult.observations.map((summary) => ({
             claim: summary,
             support: "direct",
-            sourceRefs: [],
+            sourceRefs: [
+              ...swarmResult.branchObservationIds.map((observationId) => ({ payloadPath: `observation:${observationId}` })),
+              ...swarmResult.artifactIds.map((artifactId) => ({ payloadPath: `artifact:${artifactId}` })),
+            ],
           })),
           metadata: {
             plan: swarmResult.plan,
             plan_source: swarmResult.plan.planSource,
             artifact_ids: swarmResult.artifactIds,
+            artifactIds: swarmResult.artifactIds,
             branch_observation_ids: swarmResult.branchObservationIds,
+            branchObservationIds: swarmResult.branchObservationIds,
             verification: swarmResult.verification,
             review: swarmResult.review,
             action_type: action.type,
@@ -707,6 +740,23 @@ export async function runOrchestrator(runId: string) {
     await updateRunStatus(runId, "failed", { endedAt: nowIso(), error: normalized });
     await completeTask(run.taskId, "failed");
     await completeTraceSpan(agentSpan.id, "failed", { error: normalized });
+    if (assistantMessageId) {
+      const failureText = `Run failed: ${normalized.message}`;
+      await completeAssistantMessage({
+        messageId: assistantMessageId,
+        parts: [{ type: "text", text: failureText }],
+        status: "failed",
+      });
+      await publishRunEvent({
+        runId,
+        conversationId: run.conversationId,
+        taskId: run.taskId,
+        type: "message.completed",
+        producer: { kind: "orchestrator", id: agent.id, name: "Orchestrator" },
+        trace: { trace_id: agentSpan.traceId, span_id: agentSpan.id },
+        payload: { message_id: assistantMessageId, status: "failed" },
+      });
+    }
     await publishRunEvent({
       runId,
       conversationId: run.conversationId,
@@ -1371,11 +1421,21 @@ function ensureObservationEvidenceReferences(text: string, observations: Observa
   if (observations.length === 0) {
     return text;
   }
-  const missingIds = observations.map((observation) => observation.id).filter((id) => !text.includes(id));
-  if (missingIds.length === 0) {
+  const observationIds = uniqueStrings(observations.map((observation) => observation.id));
+  const artifactIds = uniqueStrings(observations.flatMap(extractArtifactIdsFromObservation));
+  const missingObservationIds = observationIds.filter((id) => !text.includes(id));
+  const missingArtifactIds = artifactIds.filter((id) => !text.includes(id));
+  if (missingObservationIds.length === 0 && missingArtifactIds.length === 0) {
     return text;
   }
-  return `${text.trim()}\n\nEvidence observations: ${observations.map((observation) => observation.id).join(", ")}`;
+  return [
+    text.trim(),
+    "",
+    missingObservationIds.length > 0 ? `Evidence observations: ${observationIds.join(", ")}` : "",
+    missingArtifactIds.length > 0 ? `Evidence artifacts: ${artifactIds.join(", ")}` : "",
+  ]
+    .filter((part) => part.length > 0)
+    .join("\n");
 }
 
 function shouldReplanAfterObservation(input: {
@@ -1502,11 +1562,28 @@ function artifactActionToToolAction(action: CreateArtifactAction): CallToolActio
 }
 
 function extractArtifactIdsFromObservation(observation: Observation) {
+  const ids: string[] = [];
   const artifactIds = observation.metadata?.artifact_ids;
-  if (!Array.isArray(artifactIds)) {
-    return [];
+  if (Array.isArray(artifactIds)) {
+    ids.push(...artifactIds.map(String).filter(Boolean));
   }
-  return artifactIds.map(String).filter(Boolean);
+  const camelArtifactIds = observation.metadata?.artifactIds;
+  if (Array.isArray(camelArtifactIds)) {
+    ids.push(...camelArtifactIds.map(String).filter(Boolean));
+  }
+  const artifactId = observation.metadata?.artifact_id ?? observation.metadata?.artifactId;
+  if (typeof artifactId === "string" && artifactId.trim().length > 0) {
+    ids.push(artifactId.trim());
+  }
+  const artifacts = observation.metadata?.artifacts;
+  if (Array.isArray(artifacts)) {
+    ids.push(
+      ...artifacts
+        .map((artifact) => (typeof artifact === "object" && artifact !== null && "id" in artifact ? String(artifact.id) : ""))
+        .filter(Boolean),
+    );
+  }
+  return uniqueStrings(ids);
 }
 
 function observationStatusToActionStatus(status: Observation["status"]) {
@@ -1523,12 +1600,13 @@ function summarizeToolInput(input: Record<string, unknown>) {
   return JSON.stringify(input).slice(0, 240);
 }
 
-type ConversationMessageLike = {
+type ConversationMessageWithMetadata = {
   role: string;
   parts: unknown[];
+  metadata?: unknown;
 };
 
-function toChatMessages(messages: ConversationMessageLike[]): ChatMessage[] {
+function toChatMessages(messages: ConversationMessageWithMetadata[]): ChatMessage[] {
   return messages
     .filter((message) => message.role === "user" || message.role === "assistant")
     .map((message) => ({
@@ -1544,14 +1622,241 @@ function extractTextFromParts(parts: unknown[]) {
       if (typeof part !== "object" || part === null) {
         return "";
       }
-      if (!("type" in part) || !("text" in part)) {
-        return "";
+      const candidate = part as { type?: unknown; text?: unknown; artifact_id?: unknown; artifactId?: unknown };
+      if (candidate.type === "text" && typeof candidate.text === "string") {
+        return candidate.text;
       }
-      const candidate = part as { type?: unknown; text?: unknown };
-      return candidate.type === "text" && typeof candidate.text === "string" ? candidate.text : "";
+      const artifactId =
+        typeof candidate.artifact_id === "string"
+          ? candidate.artifact_id.trim()
+          : typeof candidate.artifactId === "string"
+            ? candidate.artifactId.trim()
+            : "";
+      if (candidate.type === "artifact_preview" && artifactId.length > 0) {
+        return `[Artifact context reference: ${artifactId}]`;
+      }
+      return "";
     })
     .filter(Boolean)
     .join("\n\n");
+}
+
+function collectArtifactContextIds(messages: ConversationMessageWithMetadata[], latestUserIndex: number, maxArtifacts = 8) {
+  const scope = latestUserIndex >= 0 ? messages.slice(0, latestUserIndex + 1) : messages;
+  const discovered: string[] = [];
+
+  for (let index = scope.length - 1; index >= 0; index -= 1) {
+    const message = scope[index];
+    if (typeof message !== "object" || message === null) {
+      continue;
+    }
+    if (!Array.isArray(message.parts)) {
+      continue;
+    }
+
+    for (const id of extractArtifactIdsFromParts(message.parts)) {
+      discovered.push(id);
+    }
+
+    const metadata = message.metadata;
+    if (!metadata || typeof metadata !== "object") {
+      continue;
+    }
+    const selectedArtifactIds = parseArtifactIdList((metadata as { selectedArtifactIds?: unknown }).selectedArtifactIds);
+    const selectedArtifactIdsLegacy = parseArtifactIdList((metadata as { selected_artifact_ids?: unknown }).selected_artifact_ids);
+    for (const id of [...selectedArtifactIds, ...selectedArtifactIdsLegacy]) {
+      discovered.push(id);
+    }
+  }
+
+  return uniqueStrings(discovered).slice(0, maxArtifacts);
+}
+
+async function collectConversationArtifactContextIds(
+  conversationId: string,
+  explicitArtifactIds: string[],
+  latestUserMessage: string,
+  maxArtifacts = 8,
+) {
+  const selected = [...explicitArtifactIds];
+  try {
+    const artifacts = await listArtifacts(conversationId);
+    const recentArtifacts = artifacts
+      .filter((artifact) => artifact.status !== "deleted")
+      .filter((artifact) => artifact.title !== "DataSwarm Self-Improvement Report")
+      .sort((left, right) => {
+        const scoreDelta =
+          artifactRelevanceScore(right, latestUserMessage) - artifactRelevanceScore(left, latestUserMessage);
+        if (scoreDelta !== 0) {
+          return scoreDelta;
+        }
+        return Date.parse(right.createdAt) - Date.parse(left.createdAt);
+      });
+    for (const artifact of recentArtifacts) {
+      selected.push(artifact.id);
+    }
+  } catch {
+    // Artifact context is best-effort; failing to load the index must not block the user turn.
+  }
+  return uniqueStrings(selected).slice(0, maxArtifacts);
+}
+
+function artifactRelevanceScore(artifact: Awaited<ReturnType<typeof listArtifacts>>[number], latestUserMessage: string) {
+  const latest = latestUserMessage.toLowerCase();
+  const title = artifact.title.toLowerCase();
+  const type = artifact.type.toLowerCase();
+  const kind = String(artifact.artifactKind ?? artifact.metadata?.artifactKind ?? "").toLowerCase();
+  let score = 0;
+  if (/报告|report|html|页面|可视化|落地|方案|继续|深化|完善|expand|revise|update/.test(latest)) {
+    if (type === "html" || kind.includes("html") || title.includes("报告") || title.includes("report")) {
+      score += 4;
+    }
+    if (type === "markdown" || kind.includes("markdown")) {
+      score += 3;
+    }
+  }
+  if (/图|图表|chart|image|visual|可视化/.test(latest) && (type === "image" || kind.includes("image"))) {
+    score += 4;
+  }
+  for (const term of latest.split(/[^a-z0-9\u4e00-\u9fff]+/i).filter((item) => item.length >= 2).slice(0, 24)) {
+    if (title.includes(term) || kind.includes(term)) {
+      score += 1;
+    }
+  }
+  return score;
+}
+
+function extractArtifactIdsFromParts(parts: unknown[]) {
+  const artifactIds: string[] = [];
+  for (const part of parts) {
+    if (typeof part !== "object" || part === null) {
+      continue;
+    }
+    const candidate = part as { type?: unknown; artifact_id?: unknown; artifactId?: unknown };
+    const artifactId =
+      typeof candidate.artifact_id === "string"
+        ? candidate.artifact_id.trim()
+        : typeof candidate.artifactId === "string"
+          ? candidate.artifactId.trim()
+          : "";
+    if (candidate.type === "artifact_preview" && artifactId.length > 0) {
+      artifactIds.push(artifactId);
+    }
+  }
+  return artifactIds;
+}
+
+function parseArtifactIdList(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const normalized = value
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter((item): item is string => Boolean(item));
+
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const id of normalized) {
+    if (seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    unique.push(id);
+  }
+
+  return unique;
+}
+
+function appendArtifactContext(inputText: string, artifactContext: string) {
+  return artifactContext.length > 0 ? `${inputText}\n\n[Artifact context]\n${artifactContext}` : inputText;
+}
+
+function truncateContextText(input: string, maxLength: number) {
+  const trimmed = input.trim();
+  if (trimmed.length <= maxLength) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, maxLength)}...`;
+}
+
+async function loadArtifactContext(selectedArtifactIds: string[]) {
+  const normalizedArtifactIds = uniqueStrings(selectedArtifactIds).slice(0, 5);
+  if (normalizedArtifactIds.length === 0) {
+    return "";
+  }
+
+  const records = await Promise.all(
+    normalizedArtifactIds.map(async (artifactId) => {
+      try {
+        const artifact = await getArtifact(artifactId);
+        return { artifactId, artifact };
+      } catch {
+        return { artifactId, artifact: null };
+      }
+    }),
+  );
+
+  const sections: string[] = [];
+  for (const record of records) {
+    if (!record.artifact) {
+      sections.push(`- ${record.artifactId} (missing or inaccessible)`);
+      continue;
+    }
+
+    const metadata = record.artifact.metadata ?? {};
+    const sourceObservationIds = Array.isArray(record.artifact.sourceObservationIds)
+      ? record.artifact.sourceObservationIds.map(String).filter(Boolean)
+      : [];
+    const branchIds = Array.isArray(record.artifact.branchIds) ? record.artifact.branchIds.map(String).filter(Boolean) : [];
+    const provenance = [
+      `artifactKind=${record.artifact.artifactKind ?? metadata.artifactKind ?? "unknown"}`,
+      record.artifact.previewUri ? `previewUri=${record.artifact.previewUri}` : "",
+      sourceObservationIds.length > 0 ? `sourceObservationIds=${sourceObservationIds.join(",")}` : "",
+      branchIds.length > 0 ? `branchIds=${branchIds.join(",")}` : "",
+    ]
+      .filter(Boolean)
+      .join("; ");
+
+    if (record.artifact.type === "image") {
+      sections.push(`- ${record.artifact.id} [${record.artifact.type}] ${record.artifact.title} · image artifact context; ${provenance}`);
+      continue;
+    }
+
+    if (!record.artifact.storageUri) {
+      sections.push(`- ${record.artifact.id} [${record.artifact.type}] ${record.artifact.title} · no storage uri`);
+      continue;
+    }
+
+    try {
+      const filePath = resolveLocalUri(record.artifact.storageUri);
+      const rawContent = await readFile(filePath, "utf8");
+      const sanitized = rawContent.replace(/\s+$/g, "");
+      sections.push(
+        `- ${record.artifact.id} [${record.artifact.type}] ${record.artifact.title} ${record.artifact.mimeType ? `(${record.artifact.mimeType})` : ""}\n` +
+          `Provenance: ${provenance || "unknown"}\n` +
+          `${truncateContextText(sanitized, 2600)}`,
+      );
+    } catch {
+      sections.push(`- ${record.artifact.id} [${record.artifact.type}] ${record.artifact.title} · unable to read content`);
+    }
+  }
+
+  return sections.length > 0 ? sections.join("\n\n") : "";
+}
+
+function uniqueStrings(values: string[]) {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const value of values) {
+    const normalized = value.trim();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    unique.push(normalized);
+  }
+  return unique;
 }
 
 function findLastUserMessageIndex(messages: ChatMessage[]) {
@@ -1632,10 +1937,11 @@ function buildModelMessages(input: {
         "You are DataSwarm Orchestrator, the entry agent for a multi-agent research, data, and execution workspace.",
         `Current date context: ${input.dateContext}.`,
         "",
-        "Response contract:",
+      "Response contract:",
         "1. Answer in the user's language unless they ask otherwise.",
         "2. Treat prior user and assistant messages as working memory. Resolve follow-ups, pronouns, numbered references, and phrases such as '继续', '上面', '刚才', '我刚才问了几个问题', and '最近一周' from the provided history.",
         "3. Use DataSwarm observations as the only evidence for tool-backed claims. Observations may come from tools, skills, swarm branches, artifacts, or diagnostics.",
+        "3a. If the latest user message contains artifact context, treat it as context for this turn. When using it for facts, cite source as `artifact:<id>` inline so trace review can verify artifact-grounded claims.",
         "4. Never invent sources, tool results, files, artifacts, versions, dates, prices, metrics, or trace findings.",
         "5. You may say you searched, queried, generated, diagnosed, or used a tool only when a completed Observation explicitly supports it. Cite relevant Observation IDs.",
         "6. For web research, cite concrete source titles and URLs from observations. Separate high-confidence findings from weak, off-topic, duplicated, or constraint-mismatched sources.",

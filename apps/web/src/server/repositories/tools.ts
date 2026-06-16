@@ -93,6 +93,7 @@ export async function createToolCall(input: {
   traceSpanId?: string;
   status: string;
   inputSummary?: string;
+  metadata?: Record<string, unknown>;
 }) {
   const db = await getDb();
   const now = nowIso();
@@ -118,7 +119,7 @@ export async function createToolCall(input: {
     input.status === "running" ? now : null,
     null,
     null,
-    "{}",
+    JSON.stringify(input.metadata ?? {}),
     now,
     now,
   );
@@ -179,6 +180,9 @@ function inferCapabilityKind(name: string): ToolCapabilityKind {
   if (name === "file.read") {
     return "file_read";
   }
+  if (name === "run_python") {
+    return "visualization";
+  }
   if (name === "approval.request") {
     return "approval";
   }
@@ -201,6 +205,9 @@ function inferProvider(name: string) {
   if (name.startsWith("approval.")) {
     return "dataswarm";
   }
+  if (name === "run_python") {
+    return "dataswarm";
+  }
   return "custom";
 }
 
@@ -218,7 +225,8 @@ function inferAdapterStatus(name: string, enabled: boolean, metadata: Record<str
     name === "trace.query" ||
     name === "artifact.create" ||
     name === "approval.request" ||
-    name === "file.read"
+    name === "file.read" ||
+    name === "run_python"
   ) {
     return "implemented";
   }
@@ -244,7 +252,7 @@ function inferFreshness(name: string, metadata: Record<string, unknown>): ToolCa
   if (name === "web.search" || name === "tavily.search") {
     return "near_realtime";
   }
-  if (name.startsWith("trace.") || name.startsWith("artifact.") || name.startsWith("approval.")) {
+  if (name.startsWith("trace.") || name.startsWith("artifact.") || name.startsWith("approval.") || name === "run_python") {
     return "local";
   }
   if (name === "file.read") {
@@ -293,12 +301,15 @@ function inferEvidenceKind(value: string, name: string): ToolCapability["evidenc
   if (name === "approval.request") {
     return "user_approval";
   }
+  if (name === "run_python") {
+    return "artifact";
+  }
   return "computed_result";
 }
 
 function defaultToolDescription(name: string) {
   if (name === "web.search") {
-    return "Search the web through the best available web_search provider adapter.";
+    return "Search the web through a real provider by default; mock search is explicit opt-in only.";
   }
   if (name === "tavily.search") {
     return "Search the web for external sources and current facts.";
@@ -314,6 +325,9 @@ function defaultToolDescription(name: string) {
   }
   if (name === "approval.request") {
     return "Ask the user to approve a medium or high risk action.";
+  }
+  if (name === "run_python") {
+    return "Generate persisted image artifacts through the controlled DataSwarm parent runtime.";
   }
   return "Custom DataSwarm tool.";
 }

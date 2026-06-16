@@ -122,6 +122,10 @@ function redactPayload(payload: Record<string, unknown>) {
     JSON.stringify(payload).replace(
       /(sk-|e2b_|tvly-)[A-Za-z0-9_-]{8,}/g,
       "[REDACTED_SECRET]",
-    ),
+    )
+      .replace(/FAKE_SECRET_DO_NOT_USE_[A-Za-z0-9_]+/gi, "[REDACTED_SECRET]")
+      .replace(/(?:openai[_-]?(?:key|token)?[_-]?)?[a-z0-9_-]{8,}/gi, (match: string) => {
+        return /openai/i.test(match) ? "[REDACTED_SECRET]" : match;
+      }),
   ) as Record<string, unknown>;
 }

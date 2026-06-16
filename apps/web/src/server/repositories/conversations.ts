@@ -19,6 +19,7 @@ export type MessageRecord = {
   role: string;
   parts: unknown[];
   status: string;
+  metadata: Record<string, unknown>;
   createdAt: string;
 };
 
@@ -40,6 +41,7 @@ type MessageRow = {
   role: string;
   parts_json: string;
   status: string;
+  metadata_json: string | null;
   created_at: string;
 };
 
@@ -78,12 +80,12 @@ export async function getConversation(id: string) {
 
   const messages = db
     .prepare(
-      `SELECT id, run_id, role, parts_json, status, created_at
+      `SELECT id, run_id, role, parts_json, status, metadata_json, created_at
        FROM messages
        WHERE conversation_id = ?
        ORDER BY created_at ASC`,
     )
-    .all(id) as MessageRow[];
+      .all(id) as MessageRow[];
 
   return {
     ...mapConversation(conversation),
@@ -181,6 +183,19 @@ function mapMessage(row: MessageRow): MessageRecord {
     role: row.role,
     parts,
     status: row.status,
+    metadata: parseMetadata(row.metadata_json),
     createdAt: row.created_at,
   };
+}
+
+function parseMetadata(value: string | null): Record<string, unknown> {
+  if (!value) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
 }

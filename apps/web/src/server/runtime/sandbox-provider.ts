@@ -18,6 +18,7 @@ import {
   type SandboxToolProxyConfig,
 } from "./sandbox-tool-proxy";
 import { buildCapabilityManifest } from "./capabilities";
+import type { BranchContract, BranchFinal } from "./swarm";
 
 export const DATASWARM_E2B_TEMPLATE_ALIAS = "dataswarm-agent-runtime";
 export const DATASWARM_E2B_TEMPLATE_BUILD_COMMAND =
@@ -34,6 +35,7 @@ export type SandboxBranchJob = {
   modelProfile: string;
   objective: string;
   instruction: string;
+  branchContract?: BranchContract;
   contextBundleUri: string;
   contextBundleContent?: string;
   traceId?: string;
@@ -65,6 +67,7 @@ export type SandboxBranchResult = {
   qualitySignals?: Record<string, unknown>;
   sandboxArtifacts?: Array<Record<string, unknown>>;
   sandboxRuntime?: Record<string, unknown>;
+  branchFinal?: BranchFinal;
   startedAt: string;
   endedAt: string;
 };
@@ -120,14 +123,24 @@ export type E2bSandboxReadiness = {
   status: "ready" | "needs_provider_selection" | "needs_credentials" | "needs_template_verification" | "needs_public_callback";
 };
 
+function realRuntimeProfileEnabled() {
+  return String(process.env.DATASWARM_RUNTIME_PROFILE ?? "").startsWith("real");
+}
+
 export function sandboxProviderSelection(): "e2b" | "mock" {
   const raw = (process.env.DATASWARM_SANDBOX_PROVIDER ?? "e2b").trim().toLowerCase();
+  if (realRuntimeProfileEnabled() && raw === "mock") {
+    throw new Error("DATASWARM_RUNTIME_PROFILE=real* refuses DATASWARM_SANDBOX_PROVIDER=mock. Use npm run dev:mock for mock mode.");
+  }
   return raw === "mock" ? "mock" : "e2b";
 }
 
 function sandboxAgentModelMode(): "real" | "deterministic" {
   const raw = (process.env.DATASWARM_SANDBOX_AGENT_MODEL ?? "real").trim().toLowerCase();
   if (raw === "deterministic" || raw === "mock" || raw === "mock_actions") {
+    if (realRuntimeProfileEnabled()) {
+      throw new Error("DATASWARM_RUNTIME_PROFILE=real* refuses deterministic/mock sandbox agent model mode.");
+    }
     return "deterministic";
   }
   return "real";
@@ -600,6 +613,7 @@ function buildSandboxAgentJob(job: SandboxBranchJob, executionMode: "mock" | "e2
     modelProfile: job.modelProfile,
     objective: job.objective,
     instruction: job.instruction,
+    branchContract: job.branchContract,
     contextBundleUri: job.contextBundleUri,
     contextBundleContent: job.contextBundleContent,
     executionMode,
@@ -677,6 +691,7 @@ function parseSandboxAgentOutput(text: string | undefined, stdout: string[]) {
         ? resultLine.artifacts.filter(isRecord)
         : undefined,
       sandboxRuntime: isRecord(resultLine.runtime) ? resultLine.runtime : undefined,
+      branchFinal: isRecord(resultLine.branchFinal) ? (resultLine.branchFinal as BranchFinal) : undefined,
     };
   }
 
@@ -952,6 +967,7 @@ function buildE2bPreflightEvidence(readiness: E2bSandboxReadiness) {
     readiness_reasons: readiness.readinessReasons,
     next_steps: readiness.nextSteps,
     verification_commands: readiness.verificationCommands,
+    tool_proxy_readiness: getSandboxToolProxyReadiness(),
     ready_for_live_smoke: readiness.readyForLiveSmoke,
     ready_for_orchestrator: readiness.readyForOrchestrator,
   };

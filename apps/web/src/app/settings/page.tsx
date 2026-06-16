@@ -3,6 +3,9 @@ import { listAllModelProfiles } from "@/server/repositories/model-profiles";
 import { getSystemSnapshot } from "@/server/repositories/system";
 import { SettingsClient } from "./settings-client";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 export default async function SettingsPage() {
   const [models, snapshot] = await Promise.all([listAllModelProfiles(), getSystemSnapshot()]);
 

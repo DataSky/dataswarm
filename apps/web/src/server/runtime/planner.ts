@@ -76,14 +76,15 @@ function buildPlannerMessages(input: {
         "If the task needs fresh external evidence, local file inspection, computation, trace diagnosis, or approval, choose call_tool for the best available tool capability.",
         "If the user explicitly asks for a report, HTML, Markdown, or persisted deliverable after evidence exists, choose create_artifact.",
         "If the task is explicitly multi-agent, swarm, parallel branch, sandbox, or requires independent research/analysis/validation branches, choose spawn_swarm. Use spawn_agent only for a single delegated agent.",
-        "For spawn_swarm, prefer a branches array with task-specific title, instruction, and modelProfile for each branch. Avoid generic research/analysis/validation branches unless those roles genuinely match the user goal.",
+        "For spawn_swarm, prefer a branches array with task-specific title, instruction, and modelProfile for each branch. Avoid generic research/analysis/validation branches unless those roles genuinely match the user goal. You may provide up to 10 branches when the user explicitly asks for large parallel swarm execution.",
         "Choose call_tool only for tools with enabled=true and adapterStatus=implemented. Planned tools are visible for roadmap awareness but are not executable.",
         "Active skills are execution guidance and domain policy, not proof that work has happened. Use them to choose the next action, then rely on tool Observations for evidence.",
         "When trace-diagnostics is active for a conversation/run/trace analysis task, prefer trace.query before making claims about runtime behavior.",
         "When web-research is active for fresh/current facts, prefer any implemented web_search capability and use source-diverse queries.",
         "When report-generation is active, create artifacts only after observations provide concrete content; do not embed raw HTML in final_answer.",
         "The runtime may call you multiple times in one run. Treat Existing observations as the current working state, not as final truth.",
-        "If Existing observations already include a completed swarm/mock/e2b agent observation for the current objective, do not choose spawn_swarm or spawn_agent again unless the user explicitly asks to rerun, retry, or add new branches. Choose final_answer or create_artifact from those branch observations.",
+        "If the latest user message includes artifact context, treat that as privileged input for this turn and prefer it over prior summaries.",
+        "If Existing observations include a completed swarm/mock/e2b agent observation from the current run, you may choose final_answer or create_artifact from those branch observations only when this run has already produced actionable branch artifacts or the user explicitly asks to summarize existing evidence.",
         "If a web-search observation returned 0 sources or weak/off-topic sources, do not final_answer unless the step budget is exhausted. Choose another call_tool with a broader, alternative, or complementary query.",
         "For source verification, diversify queries across primary domains, GitHub repositories/releases, official docs/news pages, and broad web search. Avoid repeating a query that already returned 0 sources.",
         "For web_search tools, pass useful parameters such as query, max_results, search_depth, topic, include_domains, exclude_domains, include_raw_content, and include_answer when the selected tool supports them.",
@@ -393,7 +394,7 @@ function normalizeSwarmBranches(value: unknown): SwarmActionBranchDefinition[] |
       return { id, title, instruction, modelProfile };
     })
     .filter((branch) => branch.title.length > 0 || branch.instruction.length > 0)
-    .slice(0, 6);
+    .slice(0, 10);
 
   if (branches.length === 0) {
     return undefined;
@@ -469,16 +470,97 @@ function nestedActionValue(rawAction: Record<string, unknown>, field: string) {
 }
 
 function extractJson(rawText: string) {
-  const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(rawText);
+  const trimmed = rawText.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  const candidates = [trimmed];
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(trimmed);
   if (fenced?.[1]) {
-    return fenced[1].trim();
+    candidates.unshift(fenced[1].trim());
   }
-  const start = rawText.indexOf("{");
-  const end = rawText.lastIndexOf("}");
-  if (start >= 0 && end > start) {
-    return rawText.slice(start, end + 1);
+
+  for (const candidate of candidates) {
+    try {
+      JSON.parse(candidate);
+      return candidate;
+    } catch {
+      const balanced = extractFirstBalancedJsonValue(candidate);
+      if (balanced) {
+        try {
+          JSON.parse(balanced);
+          return balanced;
+        } catch {
+          // Keep looking; the model may have wrapped a valid object elsewhere.
+        }
+      }
+    }
   }
-  return rawText.trim();
+
+  const balanced = extractFirstBalancedJsonValue(trimmed);
+  return balanced ?? trimmed;
+}
+
+function extractFirstBalancedJsonValue(text: string) {
+  const start = findJsonStart(text);
+  if (start < 0) {
+    return null;
+  }
+
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (character === "{" || character === "[") {
+      stack.push(character);
+      continue;
+    }
+
+    if (character === "}" || character === "]") {
+      const expected = character === "}" ? "{" : "[";
+      if (stack[stack.length - 1] !== expected) {
+        return null;
+      }
+      stack.pop();
+      if (stack.length === 0) {
+        return text.slice(start, index + 1).trim();
+      }
+    }
+  }
+
+  return null;
+}
+
+function findJsonStart(text: string) {
+  const objectStart = text.indexOf("{");
+  const arrayStart = text.indexOf("[");
+  if (objectStart < 0) {
+    return arrayStart;
+  }
+  if (arrayStart < 0) {
+    return objectStart;
+  }
+  return Math.min(objectStart, arrayStart);
 }
 
 function validatePlannerOutput(output: PlannerOutput, tools: ToolCapability[], skills: SkillRecord[]) {
@@ -556,8 +638,8 @@ function validateSwarmBranches(branches: SwarmActionBranchDefinition[] | undefin
   if (!Array.isArray(branches)) {
     throw new Error(`${actionType} branches must be an array when provided.`);
   }
-  if (branches.length === 0 || branches.length > 6) {
-    throw new Error(`${actionType} branches must include 1-6 branch definitions when provided.`);
+  if (branches.length === 0 || branches.length > 10) {
+    throw new Error(`${actionType} branches must include 1-10 branch definitions when provided.`);
   }
   for (const [index, branch] of branches.entries()) {
     if (!branch.title.trim()) {

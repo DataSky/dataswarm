@@ -1,3 +1,18 @@
+## 2026-06-15 V4.1 Delivery Closure Checkpoint - Evidence gates first slice
+
+- Baseline reviewed: conversation `conv_7d810a1e83cd4de4b612e354c210d3a0` reached real E2B branch completion, but failed closure because sandbox tool/proxy evidence was absent, image/HTML artifact coverage was missing, and branch outputs were runtime summaries rather than substantive deliverables.
+- First implementation slice in progress: introduce explicit `BranchContract` and `BranchFinal` plumbing, pass branch contracts into the sandbox job/context, add verifier gates for contract/final/tool/artifact substance coverage, and fix `trace.query` so sandbox calls using `conversation_id: current` resolve to the active parent conversation.
+- Second implementation slice: persisted `branch_contract` and `branch_final` into branch observation/event/trace metadata, and expanded sandbox `run_python` image generation so branch contracts requesting image artifacts can produce a generic evidence chart instead of silently returning no image.
+- Third implementation slice: registered `run_python` as a parent capability/tool, added the DB seed/default sandbox allowlist/capability manifest/tool metadata, implemented a controlled image-artifact adapter, and routed V3 sandbox `run_python` actions through the parent proxy before local degraded fallback.
+- Fourth implementation slice: capability-created artifacts are now merged with branch/source observation metadata and branch completion aggregates parent-created artifacts from the branch agent session, so parent-proxied `artifact.create` and `run_python` artifacts can count toward swarm artifact coverage.
+- Fifth implementation slice: cleaned obvious structural issues introduced during capability wiring, aligned `run_python` with the `visualization` capability kind, added BranchContract-required artifact coverage verification, and added V3 sandbox tool success/failure quality signals for stricter parent-proxy coverage checks.
+- Sixth implementation slice: `swarm.verify` now receives parent-side event evidence from `run_events` and `tool_calls`, including capability/proxy completion/failure counts and required tool completion counts, so verifier checks no longer depend only on sandbox self-reported quality signals.
+- Seventh implementation slice: conversation diagnostics now expose `swarmEvidence` with parent-proxy completion/failure counts, latest verify event evidence, BranchContract/BranchFinal counts, required-tool verify failures, and artifact coverage by type/linkage, so conversationId diagnosis can reproduce whether parent-proxied tools and artifacts were actually recorded.
+- Eighth implementation slice: diagnostics artifact details now expose parsed artifact metadata, and `swarmEvidence` includes real E2B branch payload count plus fallback/degraded branch signals so conversationId diagnostics can distinguish real external sandbox execution from degraded or unsupported paths.
+- Ninth implementation slice: default `npm run dev` now routes through `scripts/dev-real.mjs`, which enforces real E2B + real sandbox model + parent proxy defaults and refuses mock/degraded environment variables unless explicit mock mode is requested; root/apps scripts expose `dev:real`, `dev:tunnel`, and explicit `dev:mock`.
+- Tenth implementation slice: removed implicit web.search mock fallback; missing Tavily credentials now fail the real tool path instead of returning mock sources, and provider=mock requires explicit mock opt-in so parent-proxied web.search evidence cannot be confused with real search.
+- Validation status: code changes are being staged intentionally without claiming live success. Static/local/live validation remains required before marking V4.1 complete.
+
 # DataSwarm Implementation Status
 
 > Last updated: 2026-06-14
@@ -1914,3 +1929,460 @@ Browser smoke on `conv_4af472520ffa4aee822eb5d674a5d7a8`:
   ]
 }
 ```
+
+## DataSwarm V4.1 Real Startup Guard Checkpoint
+
+Implemented a real-by-default startup hardening slice for the E2B ReAct swarm work.
+
+Changes:
+
+- Root `npm run dev` and `npm run dev:real` now start the Cloudflare Tunnel real profile instead of the local-only real profile.
+- `apps/web` `dev` and `dev:real` now start `scripts/dev-real-cloudflare-tunnel.mjs`.
+- Added explicit `dev:local-real` for non-tunnel local debugging.
+- Real startup scripts now unconditionally refuse inherited mock/degraded environment variables.
+- `scripts/dev-real.mjs` now fails fast when no public sandbox capability proxy URL is available, unless `DATASWARM_ALLOW_LOCAL_SANDBOX_PROXY=1` is explicitly set for UI-only local debugging.
+- `scripts/dev-real-cloudflare-tunnel.mjs` now forces `DATASWARM_SANDBOX_PROVIDER=e2b`, `DATASWARM_SANDBOX_AGENT_MODEL=real`, and `DATASWARM_SANDBOX_TOOL_PROXY=parent`, and logs the public proxy/capability URLs.
+- `web.search` default provider selection preserves real Tavily by default and permits mock only under explicit mock opt-in.
+- Added `/api/internal/sandbox/health` to expose a redacted, public-checkable capability/proxy health contract for E2B callbacks.
+- Sandbox proxy readiness now fails external E2B readiness when any required V4 capability is missing from the capability manifest.
+- E2B preflight evidence now includes the detailed `tool_proxy_readiness` payload, so diagnostics can distinguish public URL failures from capability surface failures.
+- The sandbox health route returns a structured failed `503` payload when runtime guards reject the current environment, so callback/preflight diagnostics can report the guard failure instead of a generic server error.
+- Conversation diagnostics now include `summary.capabilityPlaneHealth`, plus a `capability-plane-health` remediation item when runtime profile, mock contamination, public proxy readiness, or required capability coverage blocks real E2B parent-proxy execution.
+
+## DataSwarm V4.1 Artifact Context Carry-forward Checkpoint
+
+Implemented an orchestrator context-management slice to address second-turn artifact loss.
+
+Changes:
+
+- The orchestrator now auto-selects recent artifacts from the current conversation even when the user does not explicitly attach or select artifact previews in the prompt.
+- Explicit artifact references still take priority, then recent conversation artifacts are added up to the bounded context limit.
+- Artifact context now includes artifact provenance fields such as `artifactKind`, `previewUri`, `sourceObservationIds`, and `branchIds`.
+- Markdown/HTML artifacts contribute bounded content excerpts to the latest user message context.
+- Image artifacts contribute provenance and preview context without attempting to inject binary content.
+- Recent artifacts are relevance-scored against the latest user message, so follow-up requests for reports, HTML, visualizations, continuation, or deepening prioritize substantive matching artifacts over unrelated recent outputs.
+- The orchestrator now emits `artifact.context.prepared` with selected artifact ids, explicit refs, context length, and selection policy so diagnostics can prove which artifacts were carried forward.
+- Conversation diagnostics now summarizes artifact carry-forward via `swarmEvidence.artifactContextPreparedCount` and `latestArtifactContextPrepared`.
+
+## DataSwarm V4.1 Per-Branch Evidence Matrix Checkpoint
+
+Implemented a diagnostics slice for real E2B complex benchmark replayability.
+
+Changes:
+
+- Conversation diagnostics now exposes `summary.swarmEvidence.branchEvidenceMatrix`.
+- Each branch row summarizes real E2B sandbox proof, BranchContract/BranchFinal presence, real-model action count vs contract minimum, fallback/degraded status, tool success/failure signals, parent-proxy completion/failure counts, artifact ids/types, sourceObservation-linked artifact count, observation ids, and unsupported claims.
+- Diagnostics now reports aggregate branch evidence gaps: below minimum real-model actions, fallback/degraded branches, branches without parent-proxy evidence, and branches without artifacts.
+- Added a `swarm-branch-evidence-matrix` remediation item when per-branch evidence is insufficient for a complex E2B benchmark.
+- Sandbox V3 action lifecycle events now carry model source/status/model/retry/repair/fallback metadata, making real_model action provenance easier to audit from trace events.
+- Sandbox V3 now attempts same-step model repair for validation failures and records `repairedActionCount` / `unrepairedActionCount` in quality signals.
+- Normal parent-proxy `call_tool` actions now increment tool success/failure counts, not only `run_python`.
+- Direct model actions of type `artifact.create` now normalize to parent capability `call_tool` with `toolName=artifact.create`, while explicit `create_artifact` remains the local recovery path.
+- Per-branch diagnostics now expose repaired/unrepaired action counts.
+
+## DataSwarm V4.1 BranchFinal Materialization Checkpoint
+
+Implemented a sandbox BranchFinal substance slice.
+
+Changes:
+
+- Sandbox BranchFinal now accepts local observations in addition to artifact manifests.
+- BranchFinal now includes structured `sections`, `claims`, `evidenceObservationIds`, `artifactIds`, `unsupportedClaims`, `assumptions`, and `limitations`.
+- Evidence and artifact sections are generated from actual sandbox observation ids and artifact manifests.
+- Claims are confidence-scored as `medium` when backed by observation/artifact ids and `assumption` when no local evidence id exists.
+- Reducer/verifier can now consume BranchFinal substance directly instead of relying only on runtime markdown summaries.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs a local sandbox smoke and real E2B diagnostics replay to prove BranchFinal evidence fields survive parent parsing and verification.
+
+## DataSwarm V4.1 BranchFinal-First Reducer Checkpoint
+
+Implemented a reducer substance slice.
+
+Changes:
+
+- `swarm.reduce` now receives aggregated BranchFinals.
+- Reduction branch items now prefer BranchFinal executive summaries, sections, claims, evidenceObservationIds, artifactIds, unsupportedClaims, and limitations.
+- Runtime observation summaries remain a fallback instead of the primary reducer substrate.
+- Conflict detection now also scans BranchFinal claims and section content.
+- Reduction metadata records `branch-final.sections.claims` as an assisting reducer input source.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs swarm reducer smoke and real E2B complex benchmark replay.
+
+## DataSwarm V4.1 Structured Merge Evidence Checkpoint
+
+Implemented a merge-substance slice.
+
+Changes:
+
+- Added `formatSwarmReductionEvidence` to render reducer branch items as a structured evidence document.
+- `swarm.merge` now uses BranchFinal-backed reduction evidence, including sections, claims, evidence ids, artifact ids, unsupported claims, limitations, and recommendations.
+- Final swarm observations now carry the structured merge evidence instead of only a flattened runtime summary.
+- `swarm.verify` now adds `branch_final_structured_evidence` to fail completed branches whose BranchFinals lack substantive sections, claims, and Observation/Artifact evidence ids.
+- `artifact.create` now writes artifact substance metadata including `artifactKind`, `qualitySignals.substanceStatus`, section count, character count, evidence citation count, and deliverable eligibility.
+- Branch artifact summaries now carry artifactKind and qualitySignals into reducer/verifier events.
+- `artifact_substance_coverage` now fails runtime-summary artifacts instead of counting them as substantive user deliverables.
+- Per-branch diagnostics now reports `runtimeSummaryArtifactCount`, `thinTextArtifactCount`, and `deliverableEligibleArtifactCount`.
+
+## DataSwarm V4.1 Final Evidence Citation Checkpoint
+
+Implemented a final-answer evidence citation safety net.
+
+Changes:
+
+- Final orchestrator responses now append missing Observation IDs and Artifact IDs before message completion.
+- Artifact IDs are extracted from Observation metadata fields including `artifact_ids`, `artifactIds`, `artifact_id`, `artifactId`, and `artifacts[].id`.
+- This closes the gap where artifacts could be generated and verified but omitted from the user-visible final answer.
+- Conversation diagnostics now includes `summary.finalAnswerEvidence`, checking whether the latest assistant answer cites persisted Observation IDs and Artifact IDs.
+- Diagnostics emits `final-answer-evidence-citations` remediation when final answers omit required persisted evidence citations.
+
+## DataSwarm V4.1 Event-Derived Real Model Action Diagnostics Checkpoint
+
+Implemented a diagnostics hardening slice for sandbox ReAct action provenance.
+
+Changes:
+
+- Conversation diagnostics now scans persisted `sandbox.agent.action.*` events.
+- Per-branch evidence matrix now includes event-derived `eventRealModelActionCount`, `eventMockModelActionCount`, `eventFallbackActionCount`, and `eventRepairedActionCount`.
+- Branch real-model minimum action coverage now considers both qualitySignals and persisted action events.
+- Diagnostics remediation evidence now reports branches below the minimum event-derived real model action count.
+- Parent swarm runtime now persists each sandbox event using its original `sandbox.agent.*` event type and flattens sandbox event payload fields into the parent `run_events` payload, while retaining the raw `event_payload`.
+
+## DataSwarm V4.1 Per-Branch Artifact Contract Gate Checkpoint
+
+Implemented a verifier hardening slice for artifact contract coverage.
+
+Changes:
+
+- `contract_required_artifact_coverage` now checks required artifact types per BranchContract branch.
+- Branch-linked artifact metadata is required for a branch artifact to satisfy that branch's contract.
+- Image, HTML, and Markdown requirements are matched using artifact type, MIME type, and artifactKind.
+- Verifier failure details now list missing branch/type pairs and available branch-linked artifacts.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs swarm verifier smoke and real E2B benchmark replay.
+
+## DataSwarm V4.1 Per-Branch Required Tool Gate Checkpoint
+
+Implemented a verifier hardening slice for required tool coverage.
+
+Changes:
+
+- Event evidence now carries branch-linked tool call rows and capability/proxy events.
+- `required_tool_event_coverage` now checks required tools per BranchContract branch.
+- `required_tool_call_coverage` now requires successful branch quality signals for every branch that declares required tools.
+- Verifier failure details now list missing `branchId:toolName` pairs.
+- Conversation diagnostics now includes per-branch `parentProxyEventEvidence`, `toolCallEvidence`, and `requiredToolCoverage`.
+- Diagnostics summary now reports `branchesMissingRequiredToolEvidence`, making missing parent evidence visible without manually correlating events and tool_calls.
+- Parent capability invocations now persist branch/sandbox/action/capability metadata on the created `tool_calls` rows, so verifier and diagnostics can attribute completed tool calls to the correct E2B branch.
+- `required_tool_event_coverage` now rejects global tool-count fallback for branch contracts; each `branchId:toolName` pair needs its own branch-linked parent evidence.
+- Capability invocations now emit branch-linked `sandbox.agent.observation` events for successful and failed parent-proxied calls.
+- Failed capability invocations now create failed Observations and attach failed Observation/tool_call ids to failed capability/proxy events, preserving the evidence chain instead of leaving only an exception.
+- Conversation diagnostics branch matrix now counts successful/failed `sandbox.agent.observation` evidence per branch.
+- Sandbox action normalization now maps additional model aliases (`thought`, `read_scoped_context`, `scoped_context`, `context.read`) into supported V3 actions.
+- Invalid V3 actions from real_model now receive up to two same-step repair attempts, with structured repair started/failed/succeeded events carrying rawAction, parsedAction, validationResult, repairAttempt, and finalAction evidence.
+- `swarm.verify` now has an `invalid_action_repair_policy` hard gate based on repair events plus branch qualitySignals, so invalid actions cannot disappear without either successful repair evidence or degraded/fallback evidence.
+- Conversation diagnostics now reports repair started/succeeded/failed event counts globally and per branch, keeping trace replay aligned with the new verifier gate.
+- `swarm.verify` now enforces BranchContract `minimumEvidence` per branch through `branch_minimum_evidence_coverage`, covering real model actions, successful tool calls, web.search calls, and required image/HTML/Markdown artifact counts.
+- Conversation diagnostics now reports per-branch `minimumEvidenceCoverage` and aggregate `branchesMissingMinimumEvidence`, aligning trace replay with the new verifier gate.
+- BranchContract generation now includes V4.1 `role`, `minimumEvidence`, and `finalOutputSchema` fields, so those obligations are persisted and passed into E2B branch jobs.
+- `swarm.verify` now enforces `branch_final_output_schema_coverage`, checking required sections, Observation/Artifact citations, and unsupported-claim policy against BranchFinal content.
+- Conversation diagnostics now reports per-branch `finalOutputSchemaCoverage` and aggregate `branchesMissingFinalOutputSchema`, aligning trace replay with the BranchFinal output schema verifier gate.
+- Sandbox BranchFinal materialization now honors BranchContract `finalOutputSchema.requiredSections`, appending missing required sections with schema-directed Observation/Artifact citation ids.
+- `artifact.create` now supports JSON artifacts (`json` / `application/json`) with formatted object serialization, preview recovery, `structured_json` artifactKind metadata, and JSON-specific substance quality signals.
+- `artifact.create` now supports image metadata artifacts (`image_metadata`, `image.metadata`, `image-meta`) stored as JSON with `artifactKind=image_metadata` and `countsAsImageArtifact=false`, preserving the distinction between image evidence indexes and real image artifacts.
+- Branch artifact requirements and verifier matching now support `json` and `image_metadata` contract artifact types without allowing image metadata to satisfy real image artifact coverage.
+- Sandbox model actions that emit `create_artifact` now normalize into parent-proxied `call_tool` `artifact.create`, including JSON/image metadata fields, so durable deliverables follow the capability-plane evidence path by default.
+- Sandbox action prompts now explicitly prefer parent `artifact.create` for durable deliverables and label local `create_artifact` as a degraded fallback shape.
+- `swarm.merge` now materializes a parent-level final HTML report artifact (`artifactKind=final_html_report`) from reducer BranchFinal evidence, emits `swarm.final_artifact.created`, and includes the final artifact id in downstream merge/verify/review/return artifact lists.
+- `swarm.verify` now enforces `html_report_artifact_coverage`, requiring a substantive final HTML report artifact; merge passes the generated final artifact summary into verifier artifact evidence.
+- Conversation diagnostics now reports final HTML delivery evidence via `finalArtifactEventCount` and `finalHtmlReportArtifactCount`.
+- `swarm.verify` now enforces `final_html_report_source_coverage`, requiring final HTML report artifacts to carry both source Observation ids and source Artifact ids.
+- Conversation diagnostics now reports `finalHtmlReportSourceCoveredCount` so final HTML source-link coverage is visible in conversation replay.
+- `swarm.verify` now enforces `trace_diagnostics_replayability`, checking pre-verify trace evidence for branch completion, reduce, final artifact creation, branch Observation ids, artifact ids, and capability/proxy completions when branch tools are required.
+- Conversation diagnostics now reports a `traceReplayability` summary with branch-completed, reduce, final-artifact, branch-observation, artifact, and capability/proxy counts.
+- Orchestrator swarm Observations now attach branch Observation ids and Artifact ids as claim sourceRefs and persist both snake_case and camelCase evidence id metadata for final-answer citation carry-forward.
+- Capability manifest / sandbox tool catalog now expose the full `artifact.create` V4.1 schema for Markdown, HTML, JSON, and image metadata artifacts with source observation/image artifact linkage fields.
+- Sandbox parent tool responses now retain returned artifact summaries and convert parent capability artifacts into branch-local manifest entries, so BranchFinal artifactIds can reference parent-created artifacts.
+- Parent `artifact.create` now preserves explicit sandbox-provided `sourceObservationIds` in artifact metadata and records separately which ids resolved to parent Observation records.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs parent-proxy smoke and real E2B complex benchmark replay.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs diagnostics replay against a real E2B V4.1 swarm run.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs an end-to-end conversation smoke proving final answers cite both Observation and Artifact evidence.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs reducer/merge smoke and real E2B benchmark replay.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs diagnostics replay against a real E2B complex swarm conversation.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs a second-turn conversation smoke proving that prior artifacts materially influence a follow-up HTML/report generation.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only, not live E2B acceptance evidence.
+- Final goal remains open until a real E2B complex swarm proves branch ReAct loops, parent-proxied tools, artifacts, reducer/verifier gates, and diagnostics replay by `conversationId`.
+
+## 2026-06-15 Checkpoint: web.search Observation/tool_call evidence gate
+
+- `swarm.verify` now includes `web_search_observation_coverage`, requiring every branch that declares `web.search` to have branch-linked completed `web.search` evidence with either a persisted parent `tool_call` id or a capability event `Observation` reference.
+- Parent swarm event evidence now extracts `observation_id` / `observationId` and `tool_call_id` / `toolCallId` from `capability.invoke.*` and `sandbox.tool_proxy.call.*` event payloads, so verification can distinguish real evidence-bearing web search calls from thin completion counters.
+- This hardens the V4.1 evidence chain for parent-proxied search: a branch can no longer pass the required web search gate solely because a capability completion event exists without replayable `tool_call` or `Observation` linkage.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs parent/capability proxy smoke and real E2B complex swarm replay to prove live `web.search` Observation/tool_call coverage.
+
+## 2026-06-15 Checkpoint: run_python image artifact verification gate
+
+- `swarm.verify` now includes `run_python_image_artifact_coverage`, requiring every branch that declares `run_python` or an image artifact requirement to have both branch-linked completed `run_python` evidence and a recovered real image artifact.
+- This makes image delivery failures explicit: completed Python execution can no longer satisfy the image requirement unless the artifact recovery path also produced a branch-linked image artifact.
+- The gate complements `branch_minimum_evidence_coverage` and `contract_required_artifact_coverage` with a focused, diagnostic-friendly check for the V4.1 image artifact acceptance criterion.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs parent-proxied `run_python` smoke and real E2B complex swarm replay with a generated image artifact.
+
+## 2026-06-15 Checkpoint: web.search requires both tool_call and Observation evidence
+
+- Tightened `web_search_observation_coverage`: each branch requiring `web.search` must now have both branch-linked completed parent `tool_call` evidence and branch-linked completed capability `Observation` evidence.
+- A completed tool row alone is no longer sufficient, and a capability event without an Observation id is no longer sufficient.
+- This aligns the verifier with the acceptance requirement that parent-proxied search must produce replayable parent-side tool_call plus Observation evidence.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; live E2B replay is still required to prove the tightened gate passes from real parent-proxied search calls.
+
+## 2026-06-15 Checkpoint: diagnostics for search/tool Observation and image artifact gates
+
+- Conversation diagnostics now exposes per-branch `webSearchObservationCoverage`, showing whether a branch requiring `web.search` has completed parent `tool_call` evidence, completed parent event `toolCallId` evidence, and completed capability `Observation` evidence.
+- Conversation diagnostics now exposes per-branch `runPythonImageArtifactCoverage`, showing whether a branch requiring `run_python` or an image artifact has completed `run_python` evidence and a recovered image artifact.
+- Diagnostics summary now reports `branchesMissingWebSearchObservationCoverage` and `branchesMissingRunPythonImageArtifactCoverage`.
+- Remediation generation now treats those missing coverage counts as high-priority swarm branch evidence gaps, so a `conversationId` replay can directly explain failures in the new V4.1 hard gates.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; diagnostics still need to be replayed against a real E2B conversation after parent-proxy and run_python smoke validation.
+
+## 2026-06-15 Checkpoint: Markdown deliverable artifact hard gate and diagnostics
+
+- `swarm.verify` now includes `markdown_summary_artifact_coverage`, requiring every branch with a Markdown artifact requirement to produce a branch-linked substantive Markdown deliverable artifact.
+- Markdown runtime summaries and thin text artifacts are explicitly rejected for this gate, addressing the prior failure mode where execution summaries were counted as user-facing research/report deliverables.
+- Conversation diagnostics now exposes per-branch `markdownSummaryArtifactCoverage` and aggregate `branchesMissingMarkdownSummaryArtifactCoverage`.
+- Remediation generation now treats missing substantive Markdown deliverables as high-priority branch evidence gaps.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs local smoke and real E2B replay to prove substantive Markdown artifacts are generated and accepted by the new gate.
+
+## 2026-06-15 Checkpoint: artifact source Observation coverage
+
+- `swarm.verify` now includes `artifact_source_observation_coverage`, requiring each BranchContract required artifact to be branch-linked and carry `sourceObservationIds`.
+- This prevents artifact existence alone from satisfying delivery coverage when the artifact cannot be traced back to Observation evidence.
+- Conversation diagnostics now exposes per-branch `artifactSourceObservationCoverage` and aggregate `branchesMissingArtifactSourceObservationCoverage`.
+- Remediation generation now treats missing artifact source Observation links as high-priority branch evidence gaps.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs artifact smoke and real E2B replay to prove generated Markdown/HTML/image artifacts carry sourceObservationIds end to end.
+
+## 2026-06-15 Checkpoint: unsupported claim coverage hard gate
+
+- `swarm.verify` now includes an explicit `unsupported_claim_coverage` gate.
+- BranchFinal `unsupportedClaims` are no longer only checked indirectly through finalOutputSchema; they now produce a dedicated verifier failure with branch-level counts.
+- Conversation diagnostics now reports aggregate `branchesWithUnsupportedClaims` and includes unsupported claim gaps in swarm branch remediation evidence.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs real BranchFinal replay to confirm unsupported claims are either backed by Observation/Artifact evidence or fail verification.
+
+## 2026-06-15 Checkpoint: verifier gate id alignment with V4.1 acceptance list
+
+- `swarm.verify` now includes the explicit V4.1 gate id `branch_final_content_present`, separating BranchFinal existence/content presence from deeper substance checks.
+- Added `successful_tool_call_coverage`, requiring BranchContract required tools to have branch-linked successful parent tool evidence with no failed tool calls.
+- Added `capability_event_coverage`, requiring BranchContract required tools to have branch-linked `capability.invoke.completed` evidence and no capability failures.
+- Added `parent_proxy_coverage`, requiring BranchContract required tools to have branch-linked `sandbox.tool_proxy.call.completed` evidence and no parent-proxy failures.
+- Added `fallback_action_policy`, requiring deterministic fallback actions to be zero or explicitly marked degraded / failed verification rather than counted as normal success.
+- Conversation diagnostics now exposes failed-check counters for these explicit gates, and remediation evidence includes the new tool/capability/proxy/fallback gate failures.
+- `final_answer_evidence_coverage` remains implemented at diagnostics/evaluator level rather than inside `swarm.verify`, because final assistant-message evidence is only authoritative after the final response has been persisted.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs type/static validation and real E2B conversation replay to prove the new gate ids are emitted and diagnostics counters populate correctly.
+
+## 2026-06-15 Checkpoint: final answer evidence coverage diagnostics
+
+- Conversation diagnostics now returns an explicit `final_answer_evidence_coverage` object, plus camelCase `finalAnswerEvidenceCoverage`, under `finalAnswerEvidence`.
+- The coverage object reports whether the latest persisted assistant answer cites Observation evidence and Artifact evidence, along with cited/persisted counts.
+- This keeps final-answer citation verification in the correct diagnostics/evaluator phase while aligning the observable output with the V4.1 acceptance gate name.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs an end-to-end conversation replay proving the final assistant answer cites persisted Observation and Artifact ids.
+
+## 2026-06-15 Checkpoint: trace.query current conversation resolution evidence
+
+- `trace.query` tool calls now persist resolved target metadata under `tool_calls.metadata_json.trace_query`, including requested conversation/run/trace ids, resolved target kind/id, resolved conversation id, and whether active conversation fallback was used.
+- This makes `conversation_id=current` and missing conversation id rewrites auditable instead of relying only on runtime behavior.
+- Conversation diagnostics now exposes `swarmEvidence.traceQueryResolution`, reporting trace.query call count, active conversation fallback count, unresolved current literal count, and resolved conversation ids.
+- Remediation generation now emits `trace-query-current-resolution` if any trace.query call still resolves to a literal current/active/this conversation id.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs parent-proxy trace.query smoke proving `current` is rewritten to the active conversationId before repository lookup.
+
+## 2026-06-15 Checkpoint: reducer input coverage replayability
+
+- `swarm.reduce` events now persist `reducer_input_coverage`, including branch contract count, BranchFinal count, branch Observation count, artifact count, branch quality signal count, branch artifact count, branch item count, evidence-bearing branch item counts, and whether reducer used BranchFinals.
+- The reduce trace span also records `reducer_input_coverage`, making reducer inputs visible in trace replay as well as run events.
+- Conversation diagnostics now exposes `swarmEvidence.reducerInputCoverage` and prints reducer input coverage in the diagnosis summary.
+- Remediation generation now emits `swarm-reducer-input-coverage` when reduce ran without BranchFinal-backed input, preventing runtime-summary-only reduction from being accepted as V4.1 delivery.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs swarm parallel smoke and real E2B complex replay proving reducer_input_coverage has BranchFinal, Observation, and Artifact evidence for all completed branches.
+
+## 2026-06-15 Checkpoint: BranchFinal materialized event replayability
+
+- Each completed branch now publishes a dedicated `swarm.branch.final.materialized` event when a BranchFinal exists.
+- The event persists branch id, sandbox/session ids, branch Observation id, artifact ids, image artifact ids, BranchContract, BranchFinal, evidence Observation ids, evidence Artifact ids, section/claim counts, unsupported claim count, and quality signals.
+- Conversation diagnostics now reports `branchFinalMaterializedEventCount`, per-branch `hasBranchFinalMaterializedEvent`, and aggregate `branchesMissingBranchFinalMaterializedEvent`.
+- Remediation generation now treats missing BranchFinal materialized events as high-priority branch evidence gaps.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs swarm smoke and real E2B replay to prove BranchFinal materialized events appear for every completed branch.
+
+## 2026-06-15 Checkpoint: swarm.verify gate coverage replayability
+
+- `swarm-verifier` now exports the V4.1 expected `swarm.verify` gate id list and `buildSwarmVerificationGateCoverage`.
+- `swarm.verify` events and trace span metadata now persist `gate_coverage`, including expected gate ids, present gate ids, missing gate ids, unexpected gate ids, failed gate ids, and completeness counts.
+- Conversation diagnostics now exposes `swarmEvidence.verificationGateCoverage` and prints verification gate coverage in the diagnosis summary.
+- Remediation generation now emits `swarm-verification-gate-coverage` if `swarm.verify` ran without the complete V4.1 gate set.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs smoke/live replay to prove `gate_coverage.complete=true` in real V4.1 swarm runs.
+
+## 2026-06-15 Checkpoint: BranchContract materialized event replayability
+
+- Each branch now publishes a dedicated `swarm.branch.contract.materialized` event after sandbox session creation and before branch execution starts.
+- The event persists branch id/index/launch metadata, agent/session/context bundle ids, title, role, required tool/artifact/question counts, minimum evidence, final output schema, fallback policy, and the full BranchContract.
+- Conversation diagnostics now reports `branchContractMaterializedEventCount`, per-branch `hasBranchContractMaterializedEvent`, and aggregate `branchesMissingBranchContractMaterializedEvent`.
+- Remediation generation now treats missing BranchContract materialized events as high-priority branch evidence gaps.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs swarm smoke and real E2B replay to prove BranchContract materialized events appear for every branch before sandbox ReAct execution.
+
+## 2026-06-15 Checkpoint: materialized BranchContract/BranchFinal events as verifier evidence
+
+- `branch_contract_coverage` now requires both BranchContract records and `swarm.branch.contract.materialized` events for every planned branch.
+- `branch_final_content_present` and `branch_final_substance` now require `swarm.branch.final.materialized` events for completed branches in addition to content-bearing/substantive BranchFinal records.
+- This makes independent materialization events part of hard verification rather than diagnostics-only evidence.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; existing runs before this event addition are expected to fail these stricter gates until rerun.
+
+## 2026-06-15 Checkpoint: artifact provenance metadata closure
+
+- `artifact.create` now writes unified provenance metadata at artifact creation time, derived from parent tool-call metadata: branch id(s), sandbox session id, sandbox action id, producer action id, tool call id, capability name, capability plane version, and producer details.
+- `run_python` image artifacts now write the same provenance metadata, plus `artifactKind=generated_image`, `sourceObservationIds` from tool input when supplied, and image-specific quality signals including `countsAsImageArtifact=true`.
+- Capability-plane artifact post-processing now enriches returned artifacts with the final parent capability Observation id, producer action id, tool call id aliases, sandbox/session ids, capability name, capability plane version, and producer details.
+- This reduces the chance that real E2B artifacts fail source/provenance gates despite being created successfully.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs parent-proxied `artifact.create` and `run_python` smoke to prove metadata persists through artifact recovery and diagnostics.
+
+## 2026-06-15 Checkpoint: run_python chart/code input compatibility
+
+- `run_python` capability manifest now accepts `code` / `python` / `script`, `chart_type`, `labels`, `values`, `data`, and `sourceObservationIds` in addition to SVG/base64 image payloads.
+- Parent `run_python` now supports a safe non-executing chart generation path: if labels/values/data are supplied, it creates a structured SVG chart artifact; if code is supplied without image bytes, it creates a code-intent SVG evidence artifact instead of failing or producing an empty placeholder.
+- `run_python` image artifact metadata now records `runPythonInputMode` in top-level metadata and qualitySignals, distinguishing `svg`, `base64`, `chart_spec`, `code_summary`, and `placeholder` paths.
+- This improves the chance that real sandbox model actions using natural `run_python` inputs produce recoverable image artifacts without executing arbitrary Python in the parent process.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs parent-proxied `run_python` smoke with chart data/code inputs and real E2B replay.
+
+## 2026-06-15 Checkpoint: sandbox run_python action schema alignment
+
+- Sandbox ReAct prompt now shows a `run_python` action example with `labels`, `values`, and `sourceObservationIds`, steering real model actions toward the parent capability schema that can generate recoverable SVG chart artifacts.
+- Sandbox action normalization now allows `call_tool` actions targeting `run_python`, so model-emitted tool-call shapes can be repaired/normalized into the parent capability path instead of being rejected unnecessarily.
+- Both legacy and V3 action validation now apply tool-call budget checks to `run_python`, preventing image generation from bypassing the branch tool budget.
+- Empty `run_python` actions now receive default chart inputs with labels/values and available source Observation ids before calling the parent proxy.
+- Deterministic/mock plot actions now include chart input fields as well; fallback remains degraded by policy and is not treated as live acceptance evidence.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs sandbox parser smoke and parent-proxied `run_python` smoke with real model actions.
+
+## 2026-06-15 Checkpoint: sandbox artifact.create substance prompt alignment
+
+- Sandbox ReAct prompting now explicitly instructs real model actions to use parent-proxied `artifact.create` with `sourceObservationIds` and substantive user-facing content.
+- The prompt now warns against runtime logs, action lists, placeholder summaries, and thin report artifacts.
+- HTML and Markdown `artifact.create` examples now include executive summary, evidence-backed sections, explicit limitations, and cited Observation ids.
+- This is intended to reduce the prior failure mode where final HTML/Markdown deliverables were empty, over-simplified, or disconnected from branch observations.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs real model action smoke and real E2B replay proving generated artifacts are substantive and sourceObservation-linked.
+
+## 2026-06-15 Checkpoint: sandbox artifact.create input completion
+
+- Sandbox parent-tool execution now completes `artifact.create` inputs before proxying them to the parent capability service.
+- If `sourceObservationIds` are missing, the sandbox fills them from prior branch Observations.
+- If title/type/content are missing, the sandbox fills a substantive Markdown or HTML report skeleton with Executive Summary, Evidence, and Limitations sections, citing available Observation ids.
+- The completion logic does not overwrite model-provided artifact content; it only fills missing fields so real model omissions are less likely to produce source-detached or empty artifacts.
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; it still needs real model action smoke and parent-proxied `artifact.create` replay.

@@ -38,15 +38,37 @@ const gates = [
   phaseGate("phase4", "e2b-readiness", "node scripts/e2b-readiness-smoke.mjs"),
   phaseGate("phase4", "e2b-live-receipt", "node scripts/e2b-live-receipt-smoke.mjs"),
   phaseGate("phase4", "run-trace-system-readiness", "node scripts/run-trace-system-readiness-smoke.mjs"),
+  phaseGate("phase4", "sandbox-tool-proxy-e2e", "node scripts/sandbox-tool-proxy-e2e-smoke.mjs"),
+  phaseGate("phase4", "sandbox-v3-plus-static", "node scripts/sandbox-agent-v3-plus-static-smoke.mjs"),
+  phaseGate("phase4", "sandbox-v3-plus-local", "node scripts/sandbox-agent-v3-smoke.mjs"),
+  phaseGate("phase4", "sandbox-v3-plus-real-action", "node scripts/sandbox-agent-v3-real-action-smoke.mjs"),
+  phaseGate("phase4", "sandbox-v3-plus-complex-benchmark", "node scripts/sandbox-agent-v3-plus-complex-benchmark-smoke.mjs"),
   phaseGate("phase4", "e2b-preflight-e2e", "node scripts/e2b-preflight-e2e-smoke.mjs"),
   phaseGate("phase4", "e2b-template-verification-e2e", "node scripts/e2b-template-verification-e2e-smoke.mjs"),
   phaseGate("phase4", "build", "npm --prefix apps/web run build"),
   phaseGate("phase4", "e2b-live-sandbox", "node scripts/e2b-sandbox-smoke.mjs", {
     liveExternalGate: true,
   }),
+  phaseGate("phase4", "e2b-v3-real-action", "node scripts/e2b-sandbox-v3-real-action-smoke.mjs", {
+    liveExternalGate: true,
+  }),
   phaseGate("phase4", "e2b-orchestrator-e2e", "node scripts/e2b-orchestrator-e2e-smoke.mjs", {
     liveExternalGate: true,
   }),
+  phaseGate("phase4", "e2b-orchestrator-v3-real-action", "node scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs", {
+    liveExternalGate: true,
+  }),
+  phaseGate("phase4", "e2b-orchestrator-v3-parent-proxy", "DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY=1 node scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs", {
+    liveExternalGate: true,
+  }),
+  phaseGate(
+    "phase4",
+    "e2b-branch-complex-benchmark",
+    "DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY=1 DATASWARM_E2B_ORCHESTRATOR_V3_COMPLEX_BENCHMARK=1 node scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs",
+    {
+      liveExternalGate: true,
+    },
+  ),
 
   phaseGate("phase5", "self-improvement-async", "node scripts/self-improvement-async-smoke.mjs"),
   phaseGate("phase5", "self-improvement-diagnostics", "node scripts/self-improvement-diagnostics-smoke.mjs"),
@@ -107,7 +129,9 @@ for (const gate of selectedGates) {
     console.log(tail(output, 8_000));
   }
   const elapsedMs = Date.now() - gateStartedAt;
-  const gatedSkip = gate.liveExternalGate && /SKIP E2B (?:live smoke|orchestrator e2e)/i.test(output);
+  const gatedSkip =
+    gate.liveExternalGate &&
+    /SKIP E2B (?:live smoke|orchestrator e2e|V3 real-action smoke|orchestrator V3 real-action e2e|orchestrator V3 parent-proxy e2e)/i.test(output);
   const status = result.status === 0 ? (gatedSkip ? "gated_skip" : "passed") : "failed";
   const publicResult = {
     ...publicGate(gate),

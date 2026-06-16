@@ -5,12 +5,11 @@ import { setTimeout as delay } from "node:timers/promises";
 import { DatabaseSync } from "node:sqlite";
 
 const root = process.cwd();
-const port = Number(process.env.DATASWARM_SKILL_OBSERVATION_E2E_PORT ?? 3232);
+const port = Number(process.env.DATASWARM_SWARM_PARALLEL_E2E_PORT ?? 3223);
 const baseUrl = `http://localhost:${port}`;
 const dataDir = path.resolve(root, process.env.DATASWARM_DATA_DIR ?? "data");
 const dbPath = path.join(dataDir, "dataswarm.sqlite");
-const targetSkill = process.env.DATASWARM_SKILL_OBSERVATION_TARGET ?? "trace-diagnostics";
-const smokeTitle = `Smoke skill observation e2e ${targetSkill}`;
+const smokeTitle = "Smoke swarm parallel execution e2e";
 const results = [];
 let server;
 
@@ -20,7 +19,7 @@ if (!existsSync(dbPath)) {
 }
 
 try {
-  if (process.env.DATASWARM_SKILL_OBSERVATION_E2E_SKIP_BUILD !== "1") {
+  if (process.env.DATASWARM_SWARM_PARALLEL_E2E_SKIP_BUILD !== "1") {
     await runProductionBuild();
   }
 
@@ -31,7 +30,8 @@ try {
       DATASWARM_MOCK_MODEL: "1",
       DATASWARM_MOCK_TOOLS: "1",
       DATASWARM_SANDBOX_PROVIDER: "mock",
-      DATASWARM_AGENT_MAX_STEPS: "3",
+      DATASWARM_SWARM_MAX_CONCURRENCY: "3",
+      DATASWARM_SWARM_REVIEW_MODE: "mock",
       DATASWARM_DATA_DIR: "../../data",
       DATASWARM_WORKSPACE_ROOT: "../..",
     },
@@ -51,145 +51,134 @@ try {
   expect("conversation created", typeof conversationId === "string", JSON.stringify(conversation));
 
   const accepted = await postJson(`/api/conversations/${conversationId}/messages`, {
-    text: buildSkillSmokePrompt(targetSkill),
+    text: "请用 swarm 并行启动6个沙箱分支，验证 parallel execution queue，并合并结果",
     model: "dmx:claude-opus-4-8",
     mode: "agent",
   });
   const runId = accepted?.run_id;
-  expect("skill smoke message accepted", typeof runId === "string", JSON.stringify(accepted));
+  expect("six-branch swarm message accepted", typeof runId === "string", JSON.stringify(accepted));
 
   const terminal = await waitForRun(runId);
   expect("run completed", terminal?.status === "completed", JSON.stringify(terminal));
 
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
-    const action = db
+    const events = db
       .prepare(
-        `SELECT id, action_json, status
-         FROM agent_actions
-         WHERE run_id = ? AND action_json LIKE '%"type":"use_skill"%'
-         ORDER BY created_at ASC
-         LIMIT 1`,
-      )
-      .get(runId);
-    expect("use_skill action persisted", typeof action?.id === "string", JSON.stringify(action ?? null));
-
-    const skillObservation = db
-      .prepare(
-        `SELECT id, action_id, source_type, source_name, status, evidence_level, metadata_json
-         FROM observations
-         WHERE run_id = ? AND source_type = 'skill'
-         ORDER BY created_at ASC
-         LIMIT 1`,
-      )
-      .get(runId);
-    const skillMetadata = parseJson(skillObservation?.metadata_json, {});
-    expect(
-      "skill observation persisted",
-      skillObservation?.source_name === targetSkill &&
-        skillObservation?.status === "completed" &&
-        skillObservation?.evidence_level === "real",
-      JSON.stringify(skillObservation ?? null),
-    );
-    expect(
-      "skill observation links planner action",
-      typeof action?.id === "string" && skillObservation?.action_id === action.id,
-      JSON.stringify({ actionId: action?.id, observationActionId: skillObservation?.action_id }),
-    );
-    expect(
-      "skill observation records reason manifest alternatives",
-      typeof skillMetadata.reason === "string" &&
-        skillMetadata.reason.length > 0 &&
-        skillMetadata.manifest?.purpose &&
-        Array.isArray(skillMetadata.selected_alternatives) &&
-        skillMetadata.selected_alternatives.length >= 1 &&
-        /policy\/workflow evidence/.test(String(skillMetadata.contribution_contract ?? "")),
-      JSON.stringify(skillMetadata),
-    );
-
-    const selectedEvent = db
-      .prepare(
-        `SELECT payload_json
+        `SELECT seq, event_type, payload_json
          FROM run_events
-         WHERE run_id = ? AND event_type = 'skill.selected'
-         ORDER BY created_at ASC
-         LIMIT 1`,
+         WHERE run_id = ?
+         ORDER BY seq ASC`,
       )
-      .get(runId);
-    const selectedPayload = unwrapEventPayload(selectedEvent?.payload_json);
+      .all(runId)
+      .map((row) => ({
+        seq: Number(row.seq),
+        type: String(row.event_type),
+        payload: unwrapEventPayload(row.payload_json),
+      }));
+
+    const planEvents = events.filter((event) => event.type === "swarm.plan");
+    const planPayload = planEvents[0]?.payload ?? {};
+    expect("single six-branch swarm plan persisted", planEvents.length === 1 && planPayload.branch_count === 6, JSON.stringify(planPayload));
     expect(
-      "skill.selected event links action",
-      selectedPayload.skill_name === targetSkill && selectedPayload.action_id === action?.id,
-      JSON.stringify(selectedPayload),
+      "plan records bounded parallel concurrency",
+      planPayload.max_concurrency === 3 &&
+        planPayload.effective_concurrency === 3 &&
+        planPayload.execution_mode === "batched_parallel" &&
+        planPayload.batch_count === 2,
+      JSON.stringify(planPayload),
     );
 
-    const observationEvent = db
-      .prepare(
-        `SELECT payload_json
-         FROM run_events
-         WHERE run_id = ? AND event_type = 'observation.created' AND payload_json LIKE '%"source_type":"skill"%'
-         ORDER BY created_at ASC
-         LIMIT 1`,
-      )
-      .get(runId);
-    const observationPayload = unwrapEventPayload(observationEvent?.payload_json);
+    const branchStarted = events.filter((event) => event.type === "swarm.branch.started");
+    const branchTerminal = events.filter((event) => event.type === "swarm.branch.completed" || event.type === "swarm.branch.failed");
+    expect("all six branches started", branchStarted.length === 6, `${branchStarted.length} start event(s)`);
+    expect("all six branches settled", branchTerminal.length === 6, `${branchTerminal.length} terminal event(s)`);
+
+    const firstTerminalSeq = Math.min(...branchTerminal.map((event) => event.seq));
+    const startsBeforeFirstTerminal = branchStarted.filter((event) => event.seq < firstTerminalSeq).length;
     expect(
-      "skill observation.created event persisted",
-      observationPayload.observation_id === skillObservation?.id &&
-        observationPayload.source_type === "skill" &&
-        observationPayload.action_id === action?.id,
-      JSON.stringify(observationPayload),
+      "first concurrency wave starts before any branch settles",
+      startsBeforeFirstTerminal >= 3,
+      `${startsBeforeFirstTerminal} start event(s) before first terminal seq ${firstTerminalSeq}`,
     );
 
-    const replanEvent = db
-      .prepare(
-        `SELECT payload_json
-         FROM run_events
-         WHERE run_id = ? AND event_type = 'agent.replan.requested'
-         ORDER BY created_at ASC
-         LIMIT 1`,
-      )
-      .get(runId);
-    const replanPayload = unwrapEventPayload(replanEvent?.payload_json);
+    const startedPayloads = branchStarted.map((event) => event.payload);
+    const batchIndexes = startedPayloads.map((payload) => Number(payload.batch_index));
+    const slots = startedPayloads.map((payload) => Number(payload.concurrency_slot));
     expect(
-      "skill replan links observation",
-      Array.isArray(replanPayload.observation_ids) && replanPayload.observation_ids.includes(skillObservation?.id),
-      JSON.stringify(replanPayload),
+      "started branch events carry batch and slot metadata",
+      batchIndexes.filter((value) => value === 0).length === 3 &&
+        batchIndexes.filter((value) => value === 1).length === 3 &&
+        slots.every((value) => value >= 1 && value <= 3),
+      JSON.stringify(startedPayloads),
+    );
+
+    const reduce = events.find((event) => event.type === "swarm.reduce");
+    const maxTerminalSeq = Math.max(...branchTerminal.map((event) => event.seq));
+    expect(
+      "swarm.reduce waits for every branch to settle",
+      Boolean(reduce) && reduce.seq > maxTerminalSeq,
+      `reduce seq ${reduce?.seq ?? "missing"}, max terminal seq ${maxTerminalSeq}`,
+    );
+
+    const reducePayload = reduce?.payload ?? {};
+    expect(
+      "reduce sees all branch observations",
+      reducePayload.branch_count === 6 &&
+        reducePayload.completed_branch_count === 6 &&
+        reducePayload.failed_branch_count === 0 &&
+        Array.isArray(reducePayload.branch_observation_ids) &&
+        reducePayload.branch_observation_ids.length === 6,
+      JSON.stringify(reducePayload),
+    );
+
+    const sandboxRows = db
+      .prepare(
+        `SELECT id, status, metadata_json
+         FROM sandbox_sessions
+         WHERE run_id = ?
+         ORDER BY created_at ASC`,
+      )
+      .all(runId);
+    const sandboxMetadata = sandboxRows.map((row) => parseJson(row.metadata_json, {}));
+    expect(
+      "each branch owns an independent sandbox session with concurrency metadata",
+      sandboxRows.length === 6 &&
+        sandboxRows.every((row) => row.status === "completed") &&
+        sandboxMetadata.every((metadata) => metadata.branch_id && Number(metadata.effective_concurrency) === 3),
+      JSON.stringify(sandboxMetadata),
     );
   } finally {
     db.close();
   }
+
+  cleanupSmokeRows();
+  finish();
+} catch (error) {
+  expect("swarm parallel e2e did not throw", false, error?.stack ?? String(error));
+  cleanupSmokeRows();
+  finish();
 } finally {
   if (server) {
     server.kill("SIGTERM");
-    await delay(500);
-    if (!server.killed) {
-      server.kill("SIGKILL");
-    }
   }
-  cleanupSmokeRows();
 }
 
-finish();
-
 async function runProductionBuild() {
-  const output = [];
-  const child = spawn("npm", ["--prefix", "apps/web", "run", "build"], {
+  const build = spawn("npm", ["run", "build"], {
     cwd: root,
     env: {
       ...process.env,
+      DATASWARM_MOCK_MODEL: "1",
+      DATASWARM_MOCK_TOOLS: "1",
+      DATASWARM_SANDBOX_PROVIDER: "mock",
       DATASWARM_DATA_DIR: "../../data",
       DATASWARM_WORKSPACE_ROOT: "../..",
     },
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: "inherit",
   });
-  child.stdout.on("data", (chunk) => output.push(String(chunk)));
-  child.stderr.on("data", (chunk) => output.push(String(chunk)));
-  const exitCode = await new Promise((resolve) => {
-    child.on("exit", (code) => resolve(code ?? 1));
-    child.on("error", () => resolve(1));
-  });
-  expect("production build refreshed", exitCode === 0, output.join("\n").slice(-3000));
+  const exitCode = await new Promise((resolve) => build.on("close", resolve));
+  expect("production build completed", exitCode === 0, `exit ${exitCode}`);
   if (exitCode !== 0) {
     finish();
   }
@@ -215,7 +204,7 @@ async function waitForHealth(output) {
 async function waitForRun(runId) {
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
-    const deadline = Date.now() + 60_000;
+    const deadline = Date.now() + 90_000;
     while (Date.now() < deadline) {
       const run = db.prepare("SELECT id, status FROM runs WHERE id = ?").get(runId);
       if (run?.status === "completed" || run?.status === "failed" || run?.status === "cancelled") {
@@ -238,20 +227,20 @@ async function postJson(route, body) {
   return response.json();
 }
 
-function buildSkillSmokePrompt(skillName) {
-  if (skillName === "frontend-design") {
-    return "skill smoke: activate frontend-design skill to redesign the DataSwarm artifact drawer UI and verify persisted skill observations";
+function parseJson(value, fallback) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
   }
-  if (skillName === "web-research") {
-    return "skill smoke: activate web-research skill to verify persisted skill observations";
+}
+
+function unwrapEventPayload(value) {
+  const parsed = parseJson(value, {});
+  if (parsed && typeof parsed === "object" && parsed.payload && typeof parsed.payload === "object") {
+    return parsed.payload;
   }
-  if (skillName === "report-generation") {
-    return "skill smoke: activate report-generation skill to verify persisted skill observations";
-  }
-  if (skillName === "data-profiling") {
-    return "skill smoke: activate data-profiling skill to verify persisted skill observations";
-  }
-  return `skill smoke: activate ${skillName} skill to verify persisted skill observations`;
+  return parsed;
 }
 
 function cleanupSmokeRows() {
@@ -314,22 +303,6 @@ function runDelete(db, prefix, ids) {
   db.prepare(`${prefix} (${placeholders})`).run(...ids);
 }
 
-function parseJson(value, fallback) {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return fallback;
-  }
-}
-
-function unwrapEventPayload(value) {
-  const parsed = parseJson(value, {});
-  if (parsed && typeof parsed === "object" && parsed.payload && typeof parsed.payload === "object") {
-    return parsed.payload;
-  }
-  return parsed;
-}
-
 function expect(name, passed, detail) {
   results.push({ name, passed: Boolean(passed), detail });
 }
@@ -340,9 +313,9 @@ function finish() {
     console.log(`${result.passed ? "PASS" : "FAIL"} ${result.name}: ${result.detail}`);
   }
   if (failed.length > 0) {
-    console.error(`\nSkills observation e2e smoke failed: ${failed.length}/${results.length} check(s) failed.`);
+    console.error(`\nSwarm parallel e2e smoke failed: ${failed.length}/${results.length} check(s) failed.`);
     process.exit(1);
   }
-  console.log(`\nSkills observation e2e smoke passed: ${results.length}/${results.length} check(s) passed.`);
+  console.log(`\nSwarm parallel e2e smoke passed: ${results.length}/${results.length} check(s) passed.`);
   process.exit(0);
 }

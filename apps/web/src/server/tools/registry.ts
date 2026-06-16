@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { getToolByName, createToolCall, updateToolCall } from "../repositories/tools";
-import { createTextArtifact } from "../repositories/artifacts";
+import { createBinaryArtifact, createTextArtifact } from "../repositories/artifacts";
 import { diagnoseConversation } from "../repositories/diagnostics";
 import { atomicWriteText, localUri, resolveLocalUri } from "../storage/paths";
 import { getDb, defaults } from "../storage/db";
@@ -79,6 +79,7 @@ type ToolAdapter = {
     action: CallToolAction;
     observations?: Observation[];
     onToolCallCreated?: (toolCallId: string) => Promise<void>;
+    toolCallMetadata?: Record<string, unknown>;
   }): Promise<GenericToolExecutionResult>;
 };
 
@@ -103,6 +104,10 @@ const toolAdapters: Record<string, ToolAdapter> = {
     toolName: "file.read",
     execute: executeFileReadAction,
   },
+  "run_python": {
+    toolName: "run_python",
+    execute: executeRunPythonAction,
+  },
   "approval.request": {
     toolName: "approval.request",
     execute: executeApprovalRequestAction,
@@ -121,6 +126,7 @@ export async function executeToolAction(input: {
   action: CallToolAction;
   observations?: Observation[];
   onToolCallCreated?: (toolCallId: string) => Promise<void>;
+  toolCallMetadata?: Record<string, unknown>;
 }): Promise<GenericToolExecutionResult> {
   const adapter = toolAdapters[input.action.toolName];
   if (!adapter) {
@@ -137,6 +143,7 @@ async function executeTavilyAction(input: {
   conversationId: string;
   action: CallToolAction;
   onToolCallCreated?: (toolCallId: string) => Promise<void>;
+  toolCallMetadata?: Record<string, unknown>;
 }): Promise<GenericToolExecutionResult> {
   return executeSearchViaProvider(input, "tavily");
 }
@@ -148,8 +155,13 @@ async function executeWebSearchAction(input: {
   conversationId: string;
   action: CallToolAction;
   onToolCallCreated?: (toolCallId: string) => Promise<void>;
+  toolCallMetadata?: Record<string, unknown>;
 }): Promise<GenericToolExecutionResult> {
   return executeSearchViaProvider(input);
+}
+
+function explicitMockToolsEnabled() {
+  return process.env.DATASWARM_MOCK_TOOLS === "1" || process.env.DATASWARM_ALLOW_EXPLICIT_MOCK === "1";
 }
 
 const webSearchProviders: Record<WebSearchProviderName, WebSearchProvider> = {
@@ -157,15 +169,17 @@ const webSearchProviders: Record<WebSearchProviderName, WebSearchProvider> = {
     name: "tavily",
     providerToolName: "tavily.search",
     async search({ query, options }) {
-      const useMock = process.env.DATASWARM_MOCK_TOOLS === "1" || !process.env.TAVILY_API_KEY;
-      const sources = useMock ? mockTavilySources(query) : await tavilyRestSearch(query, options);
-      return { sources, executionMode: useMock ? "mock" : "real" };
+      const sources = await tavilyRestSearch(query, options);
+      return { sources, executionMode: "real" };
     },
   },
   mock: {
     name: "mock",
     providerToolName: "mock.search",
     async search({ query }) {
+      if (!explicitMockToolsEnabled()) {
+        throw new Error("mock web.search provider requires DATASWARM_MOCK_TOOLS=1 or DATASWARM_ALLOW_EXPLICIT_MOCK=1");
+      }
       return { sources: mockWebSearchSources(query), executionMode: "mock" };
     },
   },
@@ -178,9 +192,13 @@ async function executeSearchViaProvider(input: {
   conversationId: string;
   action: CallToolAction;
   onToolCallCreated?: (toolCallId: string) => Promise<void>;
+  toolCallMetadata?: Record<string, unknown>;
 }, forcedProviderName?: WebSearchProviderName): Promise<GenericToolExecutionResult> {
   const searchInput = extractWebSearchInput(input.action.input);
   const providerName = forcedProviderName ?? searchInput.providerName ?? defaultWebSearchProviderName();
+  if (providerName === "mock" && !explicitMockToolsEnabled()) {
+    throw new Error("web.search provider=mock requires explicit mock mode; use DATASWARM_MOCK_TOOLS=1 only for mock verification.");
+  }
   const provider = webSearchProviders[providerName];
   const result = await executeWebSearch({
     runId: input.runId,
@@ -190,6 +208,7 @@ async function executeSearchViaProvider(input: {
     provider,
     ...searchInput,
     onToolCallCreated: input.onToolCallCreated,
+    toolCallMetadata: input.toolCallMetadata,
   });
   return { ...result, toolName: input.action.toolName, evidenceLevel: result.executionMode === "real" ? "real" : "mock" };
 }
@@ -208,6 +227,7 @@ export async function executeTavilySearch(input: {
   includeDomains?: string[];
   excludeDomains?: string[];
   onToolCallCreated?: (toolCallId: string) => Promise<void>;
+  toolCallMetadata?: Record<string, unknown>;
 }): Promise<ToolExecutionResult> {
   return executeWebSearch({
     ...input,
@@ -230,6 +250,7 @@ export async function executeWebSearch(input: {
   includeDomains?: string[];
   excludeDomains?: string[];
   onToolCallCreated?: (toolCallId: string) => Promise<void>;
+  toolCallMetadata?: Record<string, unknown>;
 }): Promise<ToolExecutionResult> {
   const logicalToolName = input.toolName ?? "tavily.search";
   const tool = await getToolByName(logicalToolName);
@@ -244,6 +265,7 @@ export async function executeWebSearch(input: {
     traceSpanId: input.traceSpanId,
     status: "running",
     inputSummary: input.query.slice(0, 240),
+    metadata: input.toolCallMetadata,
   });
   await input.onToolCallCreated?.(toolCall.id);
 
@@ -375,8 +397,17 @@ function webSearchProviderName(value: unknown): WebSearchProviderName | undefine
 }
 
 function defaultWebSearchProviderName(): WebSearchProviderName {
-  return webSearchProviderName(process.env.DATASWARM_WEB_SEARCH_PROVIDER) ?? "tavily";
+  const configured = webSearchProviderName(process.env.DATASWARM_WEB_SEARCH_PROVIDER);
+  if (configured) {
+    return configured;
+  }
+  if (explicitMockToolsEnabled()) {
+    return "mock";
+  }
+  return "tavily";
 }
+
+type TraceQueryContext = { conversationId?: string; runId?: string; traceSpanId?: string };
 
 async function executeTraceQueryAction(input: {
   runId: string;
@@ -385,16 +416,24 @@ async function executeTraceQueryAction(input: {
   conversationId: string;
   action: CallToolAction;
   onToolCallCreated?: (toolCallId: string) => Promise<void>;
+  toolCallMetadata?: Record<string, unknown>;
 }): Promise<GenericToolExecutionResult> {
   const tool = await getToolByName("trace.query");
   if (!tool || !tool.enabled) {
     throw new Error("trace.query tool is not enabled");
   }
 
-  const resolvedTarget = await resolveTraceQueryTarget(input.action.input);
+  const resolvedTarget = await resolveTraceQueryTarget(input.action.input, {
+    conversationId: input.conversationId,
+    runId: input.runId,
+    traceSpanId: input.traceSpanId,
+  });
   if (!resolvedTarget.conversationId) {
     throw new Error("trace.query requires input.conversation_id, input.run_id, or input.trace_id");
   }
+  const requestedConversationId = stringValue(input.action.input.conversation_id ?? input.action.input.conversationId ?? input.action.input.id);
+  const requestedRunId = stringValue(input.action.input.run_id ?? input.action.input.runId);
+  const requestedTraceId = stringValue(input.action.input.trace_id ?? input.action.input.traceId);
 
   const toolCall = await createToolCall({
     runId: input.runId,
@@ -403,6 +442,20 @@ async function executeTraceQueryAction(input: {
     traceSpanId: input.traceSpanId,
     status: "running",
     inputSummary: `${resolvedTarget.kind}=${resolvedTarget.id}`,
+    metadata: {
+      ...(input.toolCallMetadata ?? {}),
+      trace_query: {
+        requestedConversationId: requestedConversationId ?? "",
+        requestedRunId: requestedRunId ?? "",
+        requestedTraceId: requestedTraceId ?? "",
+        resolvedKind: resolvedTarget.kind,
+        resolvedId: resolvedTarget.id,
+        resolvedConversationId: resolvedTarget.conversationId,
+        usedActiveConversationFallback:
+          !requestedConversationId ||
+          ["current", "this", "active", "current_conversation"].includes(requestedConversationId.trim().toLowerCase()),
+      },
+    },
   });
   await input.onToolCallCreated?.(toolCall.id);
 
@@ -537,6 +590,7 @@ async function executeArtifactCreateAction(input: {
   action: CallToolAction;
   observations?: Observation[];
   onToolCallCreated?: (toolCallId: string) => Promise<void>;
+  toolCallMetadata?: Record<string, unknown>;
 }): Promise<GenericToolExecutionResult> {
   const tool = await getToolByName("artifact.create");
   if (!tool || !tool.enabled) {
@@ -545,11 +599,24 @@ async function executeArtifactCreateAction(input: {
 
   const spec = extractArtifactSpec(input.action.input);
   const selectedObservations = selectSourceObservations(input.observations ?? [], spec.sourceObservationIds);
+  const resolvedSourceObservationIds = Array.from(
+    new Set([
+      ...selectedObservations.map((observation) => observation.id),
+      ...spec.sourceObservationIds,
+    ].filter(Boolean)),
+  );
   const content =
     spec.content ??
     (spec.type === "html"
       ? buildHtmlArtifact({ ...spec, observations: selectedObservations })
       : buildMarkdownArtifact({ ...spec, observations: selectedObservations }));
+  const substance = classifyTextArtifactSubstance({
+    type: spec.type,
+    title: spec.title,
+    instructions: spec.instructions,
+    content,
+    sourceObservationIds: resolvedSourceObservationIds,
+  });
 
   const toolCall = await createToolCall({
     runId: input.runId,
@@ -558,30 +625,41 @@ async function executeArtifactCreateAction(input: {
     traceSpanId: input.traceSpanId,
     status: "running",
     inputSummary: `${spec.type}:${spec.title}`,
+    metadata: input.toolCallMetadata,
   });
   await input.onToolCallCreated?.(toolCall.id);
 
   try {
+    const provenanceMetadata = artifactProvenanceMetadata(input.toolCallMetadata, {
+      toolCallId: toolCall.id,
+      toolName: input.action.toolName,
+      agentSessionId: input.agentSessionId,
+    });
+    const storageArtifactType = spec.type === "image_metadata" ? "json" : spec.type;
     logServer("info", "tool.artifact.create.start", {
       runId: input.runId,
       toolCallId: toolCall.id,
       artifactType: spec.type,
       title: spec.title,
-      sourceObservationIds: selectedObservations.map((observation) => observation.id),
+      sourceObservationIds: resolvedSourceObservationIds,
     });
 
     const artifact = await createTextArtifact({
       conversationId: input.conversationId,
       runId: input.runId,
       producerAgentSessionId: input.agentSessionId,
-      type: spec.type,
+      type: storageArtifactType,
       title: spec.title,
       content,
       sourceTraceId: input.traceSpanId,
       metadata: {
-        sourceObservationIds: selectedObservations.map((observation) => observation.id),
+        ...provenanceMetadata,
+        artifactKind: substance.artifactKind,
+        sourceObservationIds: resolvedSourceObservationIds,
+        resolvedParentObservationIds: selectedObservations.map((observation) => observation.id),
         instructions: spec.instructions,
         createdByToolCallId: toolCall.id,
+        qualitySignals: substance.qualitySignals,
       },
     });
 
@@ -597,6 +675,8 @@ async function executeArtifactCreateAction(input: {
       toolCallId: toolCall.id,
       artifactId: artifact.id,
       deduped: artifact.deduped,
+      artifactKind: substance.artifactKind,
+      substanceStatus: substance.qualitySignals.substanceStatus,
     });
 
     return {
@@ -628,6 +708,250 @@ async function executeArtifactCreateAction(input: {
   }
 }
 
+async function executeRunPythonAction(input: {
+  runId: string;
+  agentSessionId: string;
+  traceSpanId: string;
+  conversationId: string;
+  action: CallToolAction;
+  onToolCallCreated?: (toolCallId: string) => Promise<void>;
+  toolCallMetadata?: Record<string, unknown>;
+}): Promise<GenericToolExecutionResult> {
+  const tool = await getToolByName("run_python");
+  if (!tool || !tool.enabled) {
+    throw new Error("run_python tool is not enabled");
+  }
+
+  const spec = extractRunPythonImageSpec(input.action.input);
+  const toolCall = await createToolCall({
+    runId: input.runId,
+    agentSessionId: input.agentSessionId,
+    toolId: tool.id,
+    traceSpanId: input.traceSpanId,
+    status: "running",
+    inputSummary: spec.mimeType + ":" + spec.title,
+    metadata: input.toolCallMetadata,
+  });
+  await input.onToolCallCreated?.(toolCall.id);
+
+  try {
+    const sourceObservationIds = stringArray(input.action.input.source_observation_ids ?? input.action.input.sourceObservationIds ?? input.action.input.observation_ids ?? input.action.input.observationIds) ?? [];
+    const provenanceMetadata = artifactProvenanceMetadata(input.toolCallMetadata, {
+      toolCallId: toolCall.id,
+      toolName: input.action.toolName,
+      agentSessionId: input.agentSessionId,
+    });
+    logServer("info", "tool.run_python.start", { runId: input.runId, toolCallId: toolCall.id, title: spec.title, mimeType: spec.mimeType });
+    const artifact = await createBinaryArtifact({
+      conversationId: input.conversationId,
+      runId: input.runId,
+      producerAgentSessionId: input.agentSessionId,
+      type: "image",
+      title: spec.title,
+      content: spec.content,
+      mimeType: spec.mimeType,
+      extension: spec.extension,
+      sourceTraceId: input.traceSpanId,
+      metadata: {
+        ...provenanceMetadata,
+        purpose: spec.purpose,
+        generatedBy: "run_python",
+        runPythonInputMode: spec.inputMode,
+        artifactKind: "generated_image",
+        sourceObservationIds,
+        createdByToolCallId: toolCall.id,
+        qualitySignals: {
+          substanceStatus: "substantive",
+          deliverableEligible: true,
+          countsAsImageArtifact: true,
+          runPythonInputMode: spec.inputMode,
+          provenanceComplete: sourceObservationIds.length > 0 || Boolean(provenanceMetadata.branchId),
+        },
+      },
+    });
+    const outputSummary = (artifact.deduped ? "Reused existing" : "Created") + " image artifact \"" + artifact.title + "\" (" + artifact.id + ") via run_python.";
+    await updateToolCall({ id: toolCall.id, status: "completed", outputSummary, outputPayloadUri: artifact.storageUri });
+    logServer("info", "tool.run_python.completed", { runId: input.runId, toolCallId: toolCall.id, artifactId: artifact.id, deduped: artifact.deduped });
+    return {
+      toolCallId: toolCall.id,
+      toolName: input.action.toolName,
+      outputSummary,
+      executionMode: "real",
+      evidenceLevel: "real",
+      payloadUri: artifact.storageUri,
+      artifacts: [artifact],
+      claims: [{ claim: outputSummary, support: "direct", sourceRefs: [{ payloadPath: artifact.storageUri }] }],
+    };
+  } catch (error) {
+    await updateToolCall({
+      id: toolCall.id,
+      status: "failed",
+      error: { code: "tool_execution_failed", message: error instanceof Error ? error.message : "Unknown run_python error" },
+    });
+    throw error;
+  }
+}
+
+function artifactProvenanceMetadata(
+  metadata: Record<string, unknown> | undefined,
+  input: { toolCallId: string; toolName: string; agentSessionId: string },
+) {
+  const branchId = stringValue(metadata?.branch_id ?? metadata?.branchId) ?? "";
+  const sandboxSessionId = stringValue(metadata?.sandbox_session_id ?? metadata?.sandboxSessionId) ?? "";
+  const sandboxActionId = stringValue(metadata?.sandbox_action_id ?? metadata?.sandboxActionId) ?? "";
+  const capabilityName = stringValue(metadata?.capability_name ?? metadata?.capabilityName ?? metadata?.tool_name ?? metadata?.toolName) ?? input.toolName;
+  const branchIds = branchId ? [branchId] : [];
+  return {
+    branchId,
+    branchIds,
+    sandboxSessionId,
+    latestSandboxSessionId: sandboxSessionId,
+    sandboxActionId,
+    producerActionId: sandboxActionId,
+    latestSandboxActionId: sandboxActionId,
+    toolCallId: input.toolCallId,
+    createdByToolCallId: input.toolCallId,
+    producerToolCallId: input.toolCallId,
+    capabilityName,
+    capabilityPlaneVersion: "dataswarm.capability-plane.v4",
+    producer: {
+      kind: "tool",
+      toolName: input.toolName,
+      capabilityName,
+      toolCallId: input.toolCallId,
+      agentSessionId: input.agentSessionId,
+      branchId,
+      sandboxSessionId,
+      sandboxActionId,
+    },
+  };
+}
+
+type RunPythonImageSpec = {
+  title: string;
+  purpose: string;
+  content: Buffer;
+  mimeType: "image/png" | "image/svg+xml" | "image/jpeg";
+  extension: "png" | "svg" | "jpg" | "jpeg";
+  inputMode: "svg" | "base64" | "chart_spec" | "code_summary" | "placeholder";
+};
+
+function extractRunPythonImageSpec(input: Record<string, unknown>): RunPythonImageSpec {
+  const title = stringValue(input.title) ?? stringValue(input.name) ?? "DataSwarm run_python image artifact";
+  const purpose = stringValue(input.purpose) ?? stringValue(input.reason) ?? "Sandbox-requested image artifact";
+  const svg = stringValue(input.svg);
+  if (svg) {
+    return { title, purpose, content: Buffer.from(svg, "utf8"), mimeType: "image/svg+xml", extension: "svg", inputMode: "svg" };
+  }
+  const contentBase64 = stringValue(input.content_base64 ?? input.contentBase64);
+  const mimeType = runPythonMimeType(input.mime_type ?? input.mimeType);
+  if (contentBase64) {
+    return { title, purpose, content: Buffer.from(contentBase64, "base64"), mimeType, extension: extensionForMimeType(mimeType), inputMode: "base64" };
+  }
+  const chartSeries = runPythonChartSeries(input);
+  const code = stringValue(input.code ?? input.python ?? input.script);
+  const chartType = stringValue(input.chart_type ?? input.chartType ?? input.kind) ?? "bar";
+  const generatedSvg = buildRunPythonEvidenceSvg(title, purpose, {
+    chartType,
+    labels: chartSeries.labels,
+    values: chartSeries.values,
+    code,
+  });
+  return {
+    title,
+    purpose,
+    content: Buffer.from(generatedSvg, "utf8"),
+    mimeType: "image/svg+xml",
+    extension: "svg",
+    inputMode: chartSeries.values.length > 0 ? "chart_spec" : code ? "code_summary" : "placeholder",
+  };
+}
+
+function runPythonChartSeries(input: Record<string, unknown>) {
+  const explicitLabels = stringArray(input.labels) ?? [];
+  const explicitValues = numberArray(input.values);
+  if (explicitValues.length > 0) {
+    return {
+      labels: explicitValues.map((_, index) => explicitLabels[index] ?? `Item ${index + 1}`),
+      values: explicitValues,
+    };
+  }
+  const records = Array.isArray(input.data) ? input.data.filter(isRecord) : [];
+  const labels: string[] = [];
+  const values: number[] = [];
+  for (const [index, record] of records.entries()) {
+    const value = Number(record.value ?? record.y ?? record.count ?? record.score ?? record.amount);
+    if (!Number.isFinite(value)) {
+      continue;
+    }
+    labels.push(stringValue(record.label ?? record.x ?? record.name ?? record.category) ?? `Item ${index + 1}`);
+    values.push(value);
+  }
+  return { labels, values };
+}
+
+function numberArray(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((item) => Number(item)).filter((item) => Number.isFinite(item));
+}
+
+function runPythonMimeType(value: unknown): "image/png" | "image/svg+xml" | "image/jpeg" {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (normalized === "image/png") return "image/png";
+  if (normalized === "image/jpeg" || normalized === "image/jpg") return "image/jpeg";
+  return "image/svg+xml";
+}
+
+function extensionForMimeType(mimeType: "image/png" | "image/svg+xml" | "image/jpeg"): "png" | "svg" | "jpg" {
+  if (mimeType === "image/png") return "png";
+  if (mimeType === "image/jpeg") return "jpg";
+  return "svg";
+}
+
+function buildRunPythonEvidenceSvg(
+  title: string,
+  purpose: string,
+  options: { chartType?: string; labels?: string[]; values?: number[]; code?: string } = {},
+) {
+  const safeTitle = escapeHtml(title);
+  const safePurpose = escapeHtml(purpose.slice(0, 180));
+  const labels = options.labels ?? [];
+  const values = options.values ?? [];
+  const maxValue = Math.max(...values.map((value) => Math.abs(value)), 1);
+  const bars = values.slice(0, 6).map((value, index) => {
+    const width = Math.max(24, Math.round((Math.abs(value) / maxValue) * 590));
+    const y = 176 + index * 48;
+    const color = ["#0f766e", "#2563eb", "#f97316", "#7c3aed", "#db2777", "#0891b2"][index % 6];
+    const label = escapeHtml((labels[index] ?? `Item ${index + 1}`).slice(0, 42));
+    const valueText = escapeHtml(String(value));
+    return `  <text x="92" y="${y - 8}" font-family="Arial, sans-serif" font-size="14" fill="#334155">${label}: ${valueText}</text>\n` +
+      `  <rect x="92" y="${y}" width="${width}" height="28" rx="10" fill="${color}" opacity="0.9"/>\n`;
+  }).join("");
+  const code = options.code ? escapeHtml(options.code.replace(/\s+/g, " ").slice(0, 180)) : "";
+  const body = bars || (
+    "  <rect x=\"92\" y=\"180\" width=\"590\" height=\"38\" rx=\"12\" fill=\"#0f766e\" opacity=\"0.92\"/>\n" +
+    "  <rect x=\"92\" y=\"252\" width=\"486\" height=\"38\" rx=\"12\" fill=\"#2563eb\" opacity=\"0.9\"/>\n" +
+    "  <rect x=\"92\" y=\"324\" width=\"342\" height=\"38\" rx=\"12\" fill=\"#f97316\" opacity=\"0.9\"/>\n" +
+    "  <rect x=\"92\" y=\"396\" width=\"532\" height=\"38\" rx=\"12\" fill=\"#7c3aed\" opacity=\"0.9\"/>\n"
+  );
+  const codeLine = code
+    ? `  <text x="92" y="456" font-family="Arial, sans-serif" font-size="13" fill="#475569">Code intent: ${code}</text>\n`
+    : "";
+  return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"960\" height=\"540\" viewBox=\"0 0 960 540\">\n" +
+    "  <rect width=\"960\" height=\"540\" fill=\"#f8fafc\"/>\n" +
+    "  <rect x=\"48\" y=\"42\" width=\"864\" height=\"456\" rx=\"28\" fill=\"#ffffff\" stroke=\"#dbe4ee\"/>\n" +
+    "  <text x=\"92\" y=\"94\" font-family=\"Arial, sans-serif\" font-size=\"30\" font-weight=\"700\" fill=\"#0f172a\">" + safeTitle + "</text>\n" +
+    "  <text x=\"92\" y=\"128\" font-family=\"Arial, sans-serif\" font-size=\"16\" fill=\"#64748b\">" + safePurpose + "</text>\n" +
+    "  <text x=\"92\" y=\"154\" font-family=\"Arial, sans-serif\" font-size=\"13\" fill=\"#94a3b8\">Input mode: " + escapeHtml(options.chartType ?? "bar") + "</text>\n" +
+    body +
+    codeLine +
+    "  <text x=\"92\" y=\"470\" font-family=\"Arial, sans-serif\" font-size=\"15\" fill=\"#64748b\">Generated by DataSwarm parent run_python capability.</text>\n" +
+    "</svg>";
+}
+
 async function executeFileReadAction(input: {
   runId: string;
   agentSessionId: string;
@@ -635,6 +959,7 @@ async function executeFileReadAction(input: {
   conversationId: string;
   action: CallToolAction;
   onToolCallCreated?: (toolCallId: string) => Promise<void>;
+  toolCallMetadata?: Record<string, unknown>;
 }): Promise<GenericToolExecutionResult> {
   const tool = await getToolByName("file.read");
   if (!tool || !tool.enabled) {
@@ -649,6 +974,7 @@ async function executeFileReadAction(input: {
     traceSpanId: input.traceSpanId,
     status: "running",
     inputSummary: targetPath,
+    metadata: input.toolCallMetadata,
   });
   await input.onToolCallCreated?.(toolCall.id);
 
@@ -761,13 +1087,20 @@ async function executeApprovalRequestAction(input: {
   };
 }
 
-async function resolveTraceQueryTarget(input: Record<string, unknown>) {
-  const conversationId = stringValue(input.conversation_id ?? input.conversationId ?? input.id);
+async function resolveTraceQueryTarget(input: Record<string, unknown>, context: TraceQueryContext = {}) {
+  const normalizeCurrentId = (value: string | undefined, fallback: string | undefined) => {
+    if (!value) return fallback;
+    const normalized = value.trim().toLowerCase();
+    return ["current", "this", "active", "current_conversation", "current-run", "current_run"].includes(normalized)
+      ? fallback
+      : value;
+  };
+  const conversationId = normalizeCurrentId(stringValue(input.conversation_id ?? input.conversationId ?? input.id), context.conversationId);
   if (conversationId) {
     return { kind: "conversation_id", id: conversationId, conversationId };
   }
 
-  const runId = stringValue(input.run_id ?? input.runId);
+  const runId = normalizeCurrentId(stringValue(input.run_id ?? input.runId), context.runId);
   if (runId) {
     const db = await getDb();
     const row = db.prepare(`SELECT conversation_id FROM runs WHERE id = ?`).get(runId) as { conversation_id?: string } | undefined;
@@ -851,7 +1184,7 @@ async function tavilyRestSearch(
 ): Promise<TavilySource[]> {
   const apiKey = process.env.TAVILY_API_KEY;
   if (!apiKey) {
-    return mockTavilySources(query);
+    throw new Error("TAVILY_API_KEY is required for real web.search/tavily.search; mock sources are only available through explicit provider=mock with DATASWARM_MOCK_TOOLS=1.");
   }
 
   logServer("info", "tool.tavily.rest.request", {
@@ -911,7 +1244,7 @@ function boundedInteger(value: unknown, min: number, max: number) {
 }
 
 type ArtifactSpec = {
-  type: "markdown" | "html";
+  type: "markdown" | "html" | "json" | "image_metadata";
   title: string;
   instructions: string;
   sourceObservationIds: string[];
@@ -920,11 +1253,19 @@ type ArtifactSpec = {
 
 function extractArtifactSpec(input: Record<string, unknown>): ArtifactSpec {
   const rawType = stringValue(input.artifact_type ?? input.artifactType ?? input.type ?? input.format);
-  const type = rawType === "html" ? "html" : "markdown";
-  const title = stringValue(input.title ?? input.name) || (type === "html" ? "DataSwarm Analysis Report HTML" : "DataSwarm Analysis Report");
+  const type = normalizeArtifactCreateType(rawType);
+  const title =
+    stringValue(input.title ?? input.name) ||
+    (type === "html"
+      ? "DataSwarm Analysis Report HTML"
+      : type === "json"
+        ? "DataSwarm Structured Evidence JSON"
+        : type === "image_metadata"
+          ? "DataSwarm Image Evidence Metadata"
+          : "DataSwarm Analysis Report");
   const instructions = stringValue(input.instructions ?? input.objective ?? input.prompt) || "Create a concise, evidence-grounded DataSwarm artifact.";
   const sourceObservationIds = stringArray(input.source_observation_ids ?? input.sourceObservationIds ?? input.observation_ids ?? input.observationIds) ?? [];
-  const content = stringValue(input.content ?? input.markdown ?? input.html);
+  const content = artifactCreateContent(input, type);
   return {
     type,
     title: title.slice(0, 120),
@@ -932,6 +1273,50 @@ function extractArtifactSpec(input: Record<string, unknown>): ArtifactSpec {
     sourceObservationIds,
     content: content || undefined,
   };
+}
+
+function normalizeArtifactCreateType(rawType: string | undefined): ArtifactSpec["type"] {
+  const normalized = (rawType ?? "").trim().toLowerCase();
+  if (normalized === "html" || normalized === "text/html") return "html";
+  if (normalized === "json" || normalized === "application/json" || normalized === "structured_json") return "json";
+  if (normalized === "image_metadata" || normalized === "image.metadata" || normalized === "image-meta" || normalized === "image/json") return "image_metadata";
+  return "markdown";
+}
+
+function artifactCreateContent(input: Record<string, unknown>, type: ArtifactSpec["type"]) {
+  if (type === "json" || type === "image_metadata") {
+    const direct =
+      type === "image_metadata"
+        ? input.image_metadata ?? input.imageMetadata ?? input.metadata ?? input.json ?? input.data ?? input.object ?? input.content
+        : input.json ?? input.data ?? input.object ?? input.content;
+    if (typeof direct === "string") {
+      try {
+        return JSON.stringify(JSON.parse(direct), null, 2);
+      } catch {
+        return type === "image_metadata"
+          ? JSON.stringify({ kind: "image_metadata", description: direct }, null, 2)
+          : direct;
+      }
+    }
+    if (direct && typeof direct === "object") {
+      return JSON.stringify(type === "image_metadata" ? { kind: "image_metadata", ...direct } : direct, null, 2);
+    }
+    if (type === "image_metadata") {
+      return JSON.stringify(
+        {
+          kind: "image_metadata",
+          title: stringValue(input.title ?? input.name) ?? "DataSwarm Image Evidence Metadata",
+          imageArtifactIds: stringArray(input.image_artifact_ids ?? input.imageArtifactIds ?? input.artifactIds ?? input.artifacts) ?? [],
+          previewUri: stringValue(input.preview_uri ?? input.previewUri) ?? "",
+          mimeType: stringValue(input.mime_type ?? input.mimeType) ?? "",
+          description: stringValue(input.description ?? input.instructions ?? input.objective ?? input.prompt) ?? "",
+        },
+        null,
+        2,
+      );
+    }
+  }
+  return stringValue(input.content ?? input.markdown ?? input.html ?? input.json);
 }
 
 function selectSourceObservations(observations: Observation[], sourceObservationIds: string[]) {
@@ -1015,6 +1400,132 @@ function buildHtmlArtifact(input: ArtifactSpec & { observations: Observation[] }
     </main>
   </body>
 </html>`;
+}
+
+function classifyTextArtifactSubstance(input: {
+  type: "markdown" | "html" | "json" | "image_metadata";
+  title: string;
+  instructions: string;
+  content: string;
+  sourceObservationIds: string[];
+}) {
+  const plainText = stripMarkup(input.content);
+  const sectionCount = countSections(input.content, input.type);
+  const characterCount = plainText.length;
+  const evidenceCitationCount = countEvidenceCitations(input.content, input.sourceObservationIds);
+  const runtimeSummaryLike = isRuntimeSummaryLike(input.content);
+  const requestedFinalReport = /html|report|报告|analysis|分析|brief|方案|deliverable|落地|可行性|executive|summary/i.test(
+    `${input.title}\n${input.instructions}`,
+  );
+  if (input.type === "json" || input.type === "image_metadata") {
+    const validJson = isValidJson(input.content);
+    return {
+      artifactKind: input.type === "image_metadata" ? "image_metadata" : "structured_json",
+      qualitySignals: {
+        substanceStatus: validJson && characterCount >= 120 ? "substantive" : "thin",
+        deliverableEligible: validJson && characterCount >= 120,
+        countsAsImageArtifact: false,
+        runtimeSummaryLike,
+        validJson,
+        sectionCount,
+        characterCount,
+        evidenceCitationCount,
+        sourceObservationCount: input.sourceObservationIds.length,
+        minimumCharacterThreshold: 120,
+        minimumSectionThreshold: 0,
+      },
+    };
+  }
+  const artifactKind = runtimeSummaryLike
+    ? "branch_runtime_summary"
+    : input.type === "html"
+      ? requestedFinalReport
+        ? "final_html_report"
+        : "html_document"
+      : requestedFinalReport
+        ? "branch_final_report"
+        : "markdown_document";
+  const hasMinimumSubstance =
+    !runtimeSummaryLike &&
+    characterCount >= (input.type === "html" ? 900 : 700) &&
+    sectionCount >= 3 &&
+    (input.sourceObservationIds.length === 0 || evidenceCitationCount > 0);
+  return {
+    artifactKind,
+    qualitySignals: {
+      substanceStatus: hasMinimumSubstance ? "substantive" : runtimeSummaryLike ? "runtime_summary" : "thin",
+      deliverableEligible: hasMinimumSubstance,
+      runtimeSummaryLike,
+      sectionCount,
+      characterCount,
+      evidenceCitationCount,
+      sourceObservationCount: input.sourceObservationIds.length,
+      minimumCharacterThreshold: input.type === "html" ? 900 : 700,
+      minimumSectionThreshold: 3,
+    },
+  };
+}
+
+function isValidJson(content: string) {
+  try {
+    JSON.parse(content);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function stripMarkup(content: string) {
+  return content
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/[#*_`>\-\[\]()]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function countSections(content: string, type: "markdown" | "html") {
+  if (type === "html") {
+    const headingMatches = content.match(/<h[1-6]\b/gi) ?? [];
+    const sectionMatches = content.match(/<section\b/gi) ?? [];
+    return Math.max(headingMatches.length, sectionMatches.length);
+  }
+  return (content.match(/^#{1,4}\s+/gm) ?? []).length;
+}
+
+function countEvidenceCitations(content: string, sourceObservationIds: string[]) {
+  const explicitIds = sourceObservationIds.filter((id) => content.includes(id)).length;
+  const genericObservationRefs = (content.match(/\b(obs|sbo|observation)[-_a-z0-9]*\b/gi) ?? []).length;
+  return explicitIds + genericObservationRefs;
+}
+
+function isRuntimeSummaryLike(content: string) {
+  const normalized = content.toLowerCase();
+  const runtimeMarkers = [
+    "actions emitted",
+    "sandbox runtime loop",
+    "model / deterministic synthesis",
+    "runtime summary",
+    "observations created",
+    "limitations",
+    "agent loop summary",
+  ].filter((marker) => normalized.includes(marker)).length;
+  const businessMarkers = [
+    "market",
+    "risk",
+    "architecture",
+    "financial",
+    "recommendation",
+    "竞争",
+    "市场",
+    "风险",
+    "架构",
+    "财务",
+    "建议",
+    "落地",
+  ].filter((marker) => normalized.includes(marker)).length;
+  return runtimeMarkers >= 3 && businessMarkers <= 1;
 }
 
 function extractSources(observations: Observation[]) {

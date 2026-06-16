@@ -104,3 +104,14 @@ capabilityInvokeConfigured: true on every branch
 ```
 
 This checkpoint proves a real E2B swarm, real model actions, capability-proxied parent tools, artifact recovery, post-settlement reduce/verify, and diagnostics reproducibility by `conversationId`.
+
+## 2026-06-15 Checkpoint: trace.query resolution metadata for capability-plane diagnostics
+
+- Parent `trace.query` tool calls now persist `trace_query` resolution metadata on `tool_calls.metadata_json`.
+- Capability-plane diagnostics can now distinguish raw model aliases such as `conversation_id=current` from the resolved active `conversationId` used for repository lookup.
+- Conversation diagnostics summarizes trace query resolution through `swarmEvidence.traceQueryResolution` and emits remediation if any literal current/active/this id remains unresolved.
+
+Validation status:
+
+- Not validated in this slice.
+- This is implementation progress only; parent-proxy smoke and real E2B replay are still required for V4.1 acceptance.

@@ -25,6 +25,9 @@ import { getSystemSnapshot } from "@/server/repositories/system";
 import { listTraceSpans } from "@/server/repositories/trace";
 import { ImprovementActions, ImprovementDiagnosticsActions } from "./improvement-actions";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 type RunPageProps = {
   params: Promise<{ id: string }>;
   searchParams: Promise<{
@@ -404,6 +407,7 @@ function Sessions({
 
 function SwarmTimeline({ events }: { events: RunEventEnvelope[] }) {
   const timeline = buildSwarmTimeline(events);
+  const latestPlan = timeline.plans[timeline.plans.length - 1];
   const hasSwarm =
     timeline.plans.length > 0 ||
     timeline.branches.length > 0 ||
@@ -418,9 +422,15 @@ function SwarmTimeline({ events }: { events: RunEventEnvelope[] }) {
           <EmptyState label="No swarm events" />
         ) : (
           <div className="grid gap-4">
-            <div className="grid gap-2 md:grid-cols-5">
+            <div className="grid gap-2 md:grid-cols-7">
               <Metric icon={<GitBranch className="size-4" />} label="Plans" value={timeline.plans.length} />
               <Metric icon={<Server className="size-4" />} label="Branches" value={timeline.branches.length} />
+              <Metric
+                icon={<Server className="size-4" />}
+                label="Concurrency"
+                value={latestPlan?.effectiveConcurrency ? `${latestPlan.effectiveConcurrency}/${latestPlan.maxConcurrency || "?"}` : "n/a"}
+              />
+              <Metric icon={<GitBranch className="size-4" />} label="Batches" value={latestPlan?.batchCount ?? "n/a"} />
               <Metric icon={<CheckCircle2 className="size-4" />} label="Reduce / Merge" value={timeline.merges.length} />
               <Metric icon={<CheckCircle2 className="size-4" />} label="Verify" value={timeline.verifications.length} />
               <Metric icon={<CheckCircle2 className="size-4" />} label="Review" value={timeline.reviews.length} />
@@ -430,6 +440,12 @@ function SwarmTimeline({ events }: { events: RunEventEnvelope[] }) {
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="text-sm font-semibold">Plan: {plan.strategy || "unknown strategy"}</div>
                   <span className="font-mono text-[11px] text-[var(--muted)]">#{plan.seq}</span>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2 font-mono text-[11px] text-[var(--muted)]">
+                  <span>mode:{plan.executionMode || "unknown"}</span>
+                  <span>branches:{plan.branchCount || "?"}/{plan.requestedBranchCount || "?"}</span>
+                  <span>concurrency:{plan.effectiveConcurrency || "?"}/{plan.maxConcurrency || "?"}</span>
+                  <span>batches:{plan.batchCount || "?"}</span>
                 </div>
                 <div className="mt-2 text-sm text-[var(--muted)]">{plan.reason || "No plan reason recorded."}</div>
               </div>
@@ -449,8 +465,12 @@ function SwarmTimeline({ events }: { events: RunEventEnvelope[] }) {
                     <div className="mt-1 flex flex-wrap gap-2 font-mono text-[11px] text-[var(--muted)]">
                       <span>{branch.branchId}</span>
                       {branch.modelProfile ? <span>{branch.modelProfile}</span> : null}
+                      {branch.batchIndex !== "" ? <span>batch:{Number(branch.batchIndex) + 1}</span> : null}
+                      {branch.concurrencySlot !== "" ? <span>slot:{branch.concurrencySlot}</span> : null}
                       {branch.sandboxSessionId ? <span>sandbox:{branch.sandboxSessionId.slice(0, 18)}</span> : null}
                       {branch.artifactId ? <span>artifact:{branch.artifactId.slice(0, 18)}</span> : null}
+                      {branch.startedAt ? <span>start:{branch.startedAt}</span> : null}
+                      {branch.endedAt ? <span>end:{branch.endedAt}</span> : null}
                     </div>
                   </div>
                   <StatusPill status={branch.status} />
@@ -966,15 +986,28 @@ type SwarmTimelineModel = {
     seq: number;
     strategy: string;
     reason: string;
+    requestedBranchCount: string;
+    branchCount: string;
+    maxConcurrency: string;
+    effectiveConcurrency: string;
+    executionMode: string;
+    batchCount: string;
   }>;
   branches: Array<{
     branchId: string;
+    branchIndex: string;
+    launchOrder: string;
+    batchIndex: string;
+    concurrencySlot: string;
+    effectiveConcurrency: string;
     title: string;
     modelProfile: string;
     agentSessionId: string;
     sandboxSessionId: string;
     status: string;
     artifactId: string;
+    startedAt: string;
+    endedAt: string;
     steps: Array<{
       seq: number;
       type: string;
@@ -1021,6 +1054,12 @@ function buildSwarmTimeline(events: RunEventEnvelope[]): SwarmTimelineModel {
         seq: event.seq,
         strategy: stringValue(payload.strategy),
         reason: stringValue(payload.reason),
+        requestedBranchCount: String(payload.requested_branch_count ?? ""),
+        branchCount: String(payload.branch_count ?? ""),
+        maxConcurrency: String(payload.max_concurrency ?? ""),
+        effectiveConcurrency: String(payload.effective_concurrency ?? ""),
+        executionMode: stringValue(payload.execution_mode),
+        batchCount: String(payload.batch_count ?? ""),
       });
       const branchPayloads = Array.isArray(payload.branches) ? payload.branches : [];
       for (const item of branchPayloads) {
@@ -1079,14 +1118,27 @@ function buildSwarmTimeline(events: RunEventEnvelope[]): SwarmTimelineModel {
     branch.agentSessionId = stringValue(payload.agent_session_id) || branch.agentSessionId;
     branch.sandboxSessionId = stringValue(payload.sandbox_session_id) || branch.sandboxSessionId;
     branch.modelProfile = stringValue(payload.model_profile) || branch.modelProfile;
+    branch.branchIndex = String(payload.branch_index ?? branch.branchIndex);
+    branch.launchOrder = String(payload.launch_order ?? branch.launchOrder);
+    branch.batchIndex = String(payload.batch_index ?? branch.batchIndex);
+    branch.concurrencySlot = String(payload.concurrency_slot ?? branch.concurrencySlot);
+    branch.effectiveConcurrency = String(payload.effective_concurrency ?? branch.effectiveConcurrency);
 
     if (event.type === "swarm.branch.started") {
       branch.status = "running";
+      branch.startedAt = stringValue(payload.started_at) || branch.startedAt;
       branch.steps.push({
         seq: event.seq,
         type: event.type,
         label: "Branch started",
-        detail: [branch.modelProfile, branch.sandboxSessionId ? `sandbox ${branch.sandboxSessionId}` : ""].filter(Boolean).join(" · "),
+        detail: [
+          branch.modelProfile,
+          branch.batchIndex !== "" ? `batch ${Number(branch.batchIndex) + 1}` : "",
+          branch.concurrencySlot ? `slot ${branch.concurrencySlot}/${branch.effectiveConcurrency || "?"}` : "",
+          branch.sandboxSessionId ? `sandbox ${branch.sandboxSessionId}` : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
       });
       continue;
     }
@@ -1105,6 +1157,8 @@ function buildSwarmTimeline(events: RunEventEnvelope[]): SwarmTimelineModel {
     if (event.type === "swarm.branch.completed") {
       branch.status = "completed";
       branch.artifactId = stringValue(payload.artifact_id) || branch.artifactId;
+      branch.startedAt = stringValue(payload.started_at) || branch.startedAt;
+      branch.endedAt = stringValue(payload.ended_at) || branch.endedAt;
       branch.steps.push({
         seq: event.seq,
         type: event.type,
@@ -1116,6 +1170,8 @@ function buildSwarmTimeline(events: RunEventEnvelope[]): SwarmTimelineModel {
 
     if (event.type === "swarm.branch.failed") {
       branch.status = stringValue(payload.status) || "failed";
+      branch.startedAt = stringValue(payload.started_at) || branch.startedAt;
+      branch.endedAt = stringValue(payload.ended_at) || branch.endedAt;
       branch.steps.push({
         seq: event.seq,
         type: event.type,
@@ -1144,12 +1200,19 @@ function ensureSwarmBranch(branches: Map<string, SwarmTimelineModel["branches"][
   }
   const created: SwarmTimelineModel["branches"][number] = {
     branchId,
+    branchIndex: "",
+    launchOrder: "",
+    batchIndex: "",
+    concurrencySlot: "",
+    effectiveConcurrency: "",
     title: branchId,
     modelProfile: "",
     agentSessionId: "",
     sandboxSessionId: "",
     status: "planned",
     artifactId: "",
+    startedAt: "",
+    endedAt: "",
     steps: [],
   };
   branches.set(branchId, created);

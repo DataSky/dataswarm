@@ -79,11 +79,13 @@ Create local environment config:
 cp .env.example apps/web/.env.local
 ```
 
-For local development without provider keys, keep the mock settings:
+For local development without provider keys, use an explicit mock-only profile:
 
 ```bash
 DATASWARM_MOCK_MODEL=1
+DATASWARM_MOCK_TOOLS=1
 DATASWARM_SANDBOX_PROVIDER=mock
+DATASWARM_SANDBOX_AGENT_MODEL=deterministic
 ```
 
 Start the app:
@@ -124,7 +126,9 @@ DMX_API_KEY=
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_API_KEY=
 
-DATASWARM_SANDBOX_PROVIDER=mock
+DATASWARM_SANDBOX_PROVIDER=e2b
+DATASWARM_SANDBOX_AGENT_MODEL=real
+DATASWARM_SWARM_MAX_CONCURRENCY=
 DATASWARM_WEB_SEARCH_PROVIDER=tavily
 TAVILY_API_KEY=
 
@@ -133,6 +137,8 @@ DATASWARM_E2B_TEMPLATE=dataswarm-agent-runtime
 DATASWARM_E2B_TEMPLATE_VERIFIED=
 DATASWARM_E2B_TEMPLATE_BUILD_ID=
 ```
+
+`DATASWARM_SWARM_MAX_CONCURRENCY` is an optional hard cap for swarm branch launch concurrency. When unset, normal swarm runs default to 3 concurrent branches; explicit 10-way parallel sandbox requests can launch up to 10 branches. Set this variable to a lower number to control E2B cost and rate-limit pressure.
 
 Ignored local state and secrets include `.env.local`, `.env.*`, `data/`, `apps/web/.next/`, `apps/web/node_modules/`, and `LLM推理服务相关信息.md`.
 

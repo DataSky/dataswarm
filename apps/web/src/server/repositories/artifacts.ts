@@ -50,7 +50,7 @@ export async function createTextArtifact(input: {
   conversationId: string;
   runId: string;
   producerAgentSessionId?: string;
-  type: "markdown" | "html";
+  type: "markdown" | "html" | "json";
   title: string;
   content: string;
   sourceTraceId?: string;
@@ -74,7 +74,7 @@ export async function createTextArtifact(input: {
     | {
         id: string;
         current_version_id: string;
-        type: "markdown" | "html";
+        type: "markdown" | "html" | "json";
         mime_type: string;
         title: string;
         storage_uri: string;
@@ -97,8 +97,8 @@ export async function createTextArtifact(input: {
 
   const artifactId = makeId("art");
   const versionId = makeId("artv");
-  const extension = input.type === "markdown" ? "md" : "html";
-  const mimeType = input.type === "markdown" ? "text/markdown" : "text/html";
+  const extension = input.type === "markdown" ? "md" : input.type === "json" ? "json" : "html";
+  const mimeType = input.type === "markdown" ? "text/markdown" : input.type === "json" ? "application/json" : "text/html";
   const artifactUri = localUri(
     "artifacts",
     defaults.projectId,
@@ -143,7 +143,7 @@ export async function createTextArtifact(input: {
       JSON.stringify(
         withArtifactQualitySignals(
           {
-            artifactKind: input.type === "html" ? "html_document" : "markdown_document",
+            artifactKind: input.type === "html" ? "html_document" : input.type === "json" ? "structured_json" : "markdown_document",
             contentHash,
             previewMode: "html",
             ...(input.metadata ?? {}),
@@ -260,6 +260,43 @@ export async function createBinaryArtifact(input: {
 
   db.exec("BEGIN;");
   try {
+    const concurrentExisting = db
+      .prepare(
+        `SELECT a.id, a.current_version_id, a.type, a.mime_type, a.title, a.storage_uri, a.preview_uri
+         FROM artifacts a
+         JOIN artifact_versions av ON av.id = a.current_version_id
+         WHERE a.conversation_id = ?
+           AND a.type = ?
+           AND av.content_hash = ?
+         ORDER BY a.created_at DESC
+         LIMIT 1`,
+      )
+      .get(input.conversationId, input.type, contentHash) as
+      | {
+          id: string;
+          current_version_id: string;
+          type: "image";
+          mime_type: string;
+          title: string;
+          storage_uri: string;
+          preview_uri: string;
+        }
+      | undefined;
+
+    if (concurrentExisting) {
+      db.exec("COMMIT;");
+      return {
+        id: concurrentExisting.id,
+        versionId: concurrentExisting.current_version_id,
+        type: concurrentExisting.type,
+        mimeType: concurrentExisting.mime_type,
+        title: concurrentExisting.title,
+        storageUri: concurrentExisting.storage_uri,
+        previewUri: concurrentExisting.preview_uri,
+        deduped: true,
+      };
+    }
+
     db.prepare(
       `INSERT INTO artifacts
        (id, tenant_id, project_id, conversation_id, run_id, producer_agent_session_id, type, mime_type, title, status, current_version_id, storage_uri, preview_uri, source_trace_id, metadata_json, created_at, updated_at)
@@ -363,6 +400,41 @@ export async function listArtifacts(conversationId: string): Promise<ArtifactRec
   }
 
   return Array.from(latestByTypeAndContent.values()).map(mapArtifact);
+}
+
+export async function listRunArtifactsForBranch(input: {
+  runId: string;
+  branchId: string;
+  producerAgentSessionId?: string;
+}): Promise<ArtifactRecord[]> {
+  const db = await getDb();
+  const rows = db
+    .prepare(
+      `SELECT a.id, a.run_id, a.type, a.mime_type, a.title, a.status, a.current_version_id,
+              av.version, av.size_bytes, av.content_hash,
+              a.storage_uri, a.preview_uri, a.source_trace_id, a.metadata_json, a.created_at
+       FROM artifacts a
+       LEFT JOIN artifact_versions av ON av.id = a.current_version_id
+       WHERE a.run_id = ?
+         AND (
+           a.producer_agent_session_id = ?
+           OR a.metadata_json LIKE ?
+           OR a.metadata_json LIKE ?
+         )
+       ORDER BY a.created_at ASC`,
+    )
+    .all(
+      input.runId,
+      input.producerAgentSessionId ?? "",
+      `%\"branchId\":\"${input.branchId}\"%`,
+      `%\"branchIds\":%${input.branchId}%`,
+    ) as ArtifactRow[];
+
+  const byId = new Map<string, ArtifactRecord>();
+  for (const row of rows) {
+    byId.set(row.id, mapArtifact(row));
+  }
+  return Array.from(byId.values());
 }
 
 export async function getArtifact(id: string): Promise<ArtifactRecord | null> {

@@ -281,6 +281,12 @@ If `Last-Event-ID` is unknown:
 
 ### 6.10 Sandbox Events
 
+DataSwarm supports three branch-local sandbox agent protocols:
+
+- `dataswarm.sandbox-agent.v1`: compatibility path for the original linear branch executor.
+- `dataswarm.sandbox-agent.v2`: bounded sandbox ReAct loop with action validation, parent tool proxy calls, local Python execution, artifact manifests, model usage reporting, and final answer synthesis.
+- `dataswarm.sandbox-agent.v3`: model-driven branch ReAct loop. Each step requests one structured `SandboxAgentAction` from the sandbox action model when available, validates the action locally, executes it, persists/bridges observations, and feeds recent observations back into the next step. `real_model`, `mock_model`, and `deterministic_fallback` action sources are explicitly marked so Trace can distinguish verified model autonomy from test/fallback paths. V3 action types include `think`, `use_skill`, `read_context`, `call_tool`, `run_python`, `create_artifact`, `reflect`, `revise_query`, `verify_evidence`, `request_more_context`, and `final_answer`.
+
 - `sandbox.create.started`
 - `sandbox.create.completed`
 - `sandbox.create.failed`
@@ -291,15 +297,33 @@ If `Last-Event-ID` is unknown:
 - `sandbox.agent.action_proposed`
 - `sandbox.agent.action_completed`
 - `sandbox.agent.observation_created`
+- `sandbox.agent.loop.started`
+- `sandbox.agent.loop.completed`
+- `sandbox.agent.loop.failed`
+- `sandbox.agent.action.proposed`
+- `sandbox.agent.action.validated`
+- `sandbox.agent.action.executing`
+- `sandbox.agent.action.completed`
+- `sandbox.agent.action.failed`
+- `sandbox.agent.tool.requested`
+- `sandbox.agent.tool.completed`
+- `sandbox.agent.tool.failed`
+- `sandbox.agent.observation.created`
+- `sandbox.agent.artifact.created`
+- `sandbox.agent.model.usage`
 - `sandbox.agent.model_skipped`
 - `sandbox.agent.model_call_started`
 - `sandbox.agent.model_call_completed`
 - `sandbox.agent.model_call_failed`
+- `sandbox.agent.action_parse_failed`
+- `sandbox.agent.action_model_unavailable`
 - `sandbox.agent.artifact_prepared`
 - `sandbox.agent.artifact_recovery_manifest`
 - `sandbox.agent.completed`
 - `sandbox.agent.failed`
 - `sandbox.log`
+- `sandbox.tool_proxy.call.started`
+- `sandbox.tool_proxy.call.completed`
 - `sandbox.artifact.uploaded`
 - `sandbox.closing`
 - `sandbox.closed`
@@ -707,7 +731,14 @@ For model-facing tools such as `web.search`, `tool_name` and `logical_tool_name`
   "strategy": "parallel_branch_then_merge",
   "reason": "Planner selected spawn_swarm for independent research, analysis, and validation branches.",
   "plan_source": "model_branches",
-  "requested_branch_count": 3,
+  "requested_branch_count": 6,
+  "branch_count": 6,
+  "max_concurrency": 3,
+  "effective_concurrency": 3,
+  "execution_mode": "batched_parallel",
+  "batch_count": 2,
+  "explicit_parallel_request": false,
+  "configured_max_concurrency": 3,
   "branches": [
     {
       "branch_id": "branch_research",
@@ -726,11 +757,20 @@ For model-facing tools such as `web.search`, `tool_name` and `logical_tool_name`
 - `model_roles`: planner action included only branch roles/count; runtime expanded them.
 - `runtime_fallback`: no executable branch plan was supplied, so compatibility fallback was used and should be visible in diagnostics.
 
+Swarm branch execution is concurrent when `effective_concurrency > 1`. `DATASWARM_SWARM_MAX_CONCURRENCY` is the operator hard cap when configured; otherwise the default is 3, with explicit 10-way parallel sandbox requests allowed up to the current branch limit of 10.
+
 ### 7.23 `swarm.branch.started`
 
 ```json
 {
   "branch_id": "branch_research",
+  "branch_index": 0,
+  "launch_order": 0,
+  "batch_index": 0,
+  "concurrency_slot": 1,
+  "effective_concurrency": 3,
+  "queued_at": "2026-06-11T09:59:59.900Z",
+  "started_at": "2026-06-11T10:00:00.000Z",
   "agent_session_id": "agent_branch_research",
   "span_id": "span_branch_research",
   "parent_span_id": "span_swarm_plan"
@@ -744,6 +784,11 @@ Parent-run wrapper around a branch-local sandbox-agent protocol event.
 ```json
 {
   "branch_id": "branch_research",
+  "branch_index": 0,
+  "launch_order": 0,
+  "batch_index": 0,
+  "concurrency_slot": 1,
+  "effective_concurrency": 3,
   "agent_session_id": "agent_branch_research",
   "sandbox_session_id": "sbx_123",
   "execution_mode": "mock",
@@ -759,11 +804,38 @@ Parent-run wrapper around a branch-local sandbox-agent protocol event.
 }
 ```
 
+For v2/v3 events, `agent_event_type` may be `sandbox.agent.action.proposed`,
+`sandbox.agent.tool.requested`, `sandbox.agent.observation.created`,
+`sandbox.agent.artifact.created`, or `sandbox.agent.model.usage`. The wrapped
+`event_payload` must include `branchId`, `actionId` where applicable,
+`runtimeVersion=dataswarm.sandbox-runtime.v2` or
+`dataswarm.sandbox-runtime.v3`, and only secret-redacted tool inputs/outputs.
+V3 action lifecycle payloads additionally include `actionSource`
+(`real_model`, `mock_model`, or `deterministic_fallback`) so diagnostics can
+prove whether the branch was truly model-driven. V3 `sandbox.agent.model.usage`
+payloads may include `retried=true`, and final quality signals include
+`modelRetryCount` when the runtime had to ask the model for a stricter JSON
+action before falling back. V3+ branch quality signals also include
+`realModelActionRatio`, `fallbackReasons`, `fallbackPolicyStatus`,
+`degradedExecution`, `reflectionCount`, `evidenceVerificationCount`, and
+`contextRequestCount`. `reflect`, `revise_query`, `verify_evidence`, and
+`request_more_context` produce branch-local agent Observations so reduce,
+verify, and diagnostics can distinguish evidence review, query rewriting, and
+missing-context requests from ordinary assistant prose. Parent tool proxy calls
+are additionally persisted as `sandbox.tool_proxy.call.*`, `tool_calls`, and
+parent `Observation` rows.
+
 ### 7.25 `swarm.branch.completed`
 
 ```json
 {
   "branch_id": "branch_research",
+  "branch_index": 0,
+  "launch_order": 0,
+  "batch_index": 0,
+  "concurrency_slot": 1,
+  "effective_concurrency": 3,
+  "queued_at": "2026-06-11T09:59:59.900Z",
   "agent_session_id": "agent_branch_research",
   "sandbox_session_id": "sbx_123",
   "status": "completed",
@@ -798,6 +870,14 @@ Parent-run wrapper around a branch-local sandbox-agent protocol event.
 ```json
 {
   "branch_id": "branch_research",
+  "branch_index": 0,
+  "launch_order": 0,
+  "batch_index": 0,
+  "concurrency_slot": 1,
+  "effective_concurrency": 3,
+  "queued_at": "2026-06-11T09:59:59.900Z",
+  "started_at": "2026-06-11T10:00:00.000Z",
+  "ended_at": "2026-06-11T10:00:05.000Z",
   "sandbox_session_id": "sbx_123",
   "status": "failed",
   "error_code": "sandbox_preflight_failed",
@@ -1331,12 +1411,12 @@ Expected sequence:
 4. `action.validated`
 5. `swarm.plan`
 6. `context.bundle.completed` repeated per branch.
-7. `swarm.branch.started` repeated.
+7. `swarm.branch.started` repeated according to `effective_concurrency`; branch events may interleave across slots/batches.
 8. `sandbox.agent.event` repeated per branch, with `agent_event_type` such as `sandbox.agent.heartbeat`, `sandbox.agent.action_completed`, or `sandbox.agent.artifact_recovery_manifest`.
 9. `artifact.created` and `artifact.preview.ready` for recovered branch artifacts when available.
 10. `observation.created` for each branch Observation.
 11. `swarm.branch.completed` or `swarm.branch.failed` per branch, each linking `observation_id`.
-12. `swarm.reduce` with `branch_items`, `branch_observation_ids`, conflict signals, and reducer recommendations.
+12. `swarm.reduce` with `branch_items`, `branch_observation_ids`, conflict signals, and reducer recommendations. It must be emitted only after every launched branch has settled as completed, failed, or cancelled.
 13. `swarm.merge` with `branch_observation_ids` and `reduction_summary`.
 14. `swarm.verify` with `branch_observation_ids` and deterministic checks.
 15. `swarm.review` with review mode, findings, recommendations, and explicit skipped/completed/failed status.

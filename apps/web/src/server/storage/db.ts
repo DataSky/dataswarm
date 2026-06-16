@@ -313,6 +313,7 @@ function seedDefaults(db: DatabaseSync) {
     ["tool_trace_query", "trace.query", "builtin", "low"],
     ["tool_approval_request", "approval.request", "builtin", "medium"],
     ["tool_web_search", "web.search", "builtin", "low"],
+    ["tool_run_python", "run_python", "builtin", "medium"],
     ["tool_tavily_search", "tavily.search", "mcp", "low"],
   ] as const;
 
@@ -348,6 +349,8 @@ function seedDefaults(db: DatabaseSync) {
     ["skill_web_research", "web-research", "skills/web-research"],
     ["skill_data_profiling", "data-profiling", "skills/data-profiling"],
     ["skill_report_generation", "report-generation", "skills/report-generation"],
+    ["skill_trace_diagnostics", "trace-diagnostics", "skills/trace-diagnostics"],
+    ["skill_frontend_design", "frontend-design", "skills/frontend-design"],
   ] as const;
 
   for (const [id, name, skillPath] of skills) {
@@ -381,7 +384,7 @@ function defaultToolMetadata(name: string) {
   if (name === "web.search") {
     return {
       displayName: "Web Search",
-      description: "Generic web_search capability routed to the best available provider adapter.",
+      description: "Generic web_search capability routed to a real provider by default; mock provider requires explicit mock mode.",
       provider: "dataswarm",
       defaultProvider: "tavily",
       providerCandidates: ["tavily", "mock"],
@@ -392,6 +395,18 @@ function defaultToolMetadata(name: string) {
       evidenceKind: "external_source",
       freshness: "near_realtime",
       costHint: "low",
+    };
+  }
+  if (name === "run_python") {
+    return {
+      displayName: "Run Python",
+      description: "Generate image artifacts through a controlled parent runtime adapter for sandbox branches.",
+      provider: "dataswarm",
+      capabilityKind: "visualization",
+      adapterStatus: "implemented",
+      evidenceKind: "artifact",
+      freshness: "local",
+      costHint: "medium",
     };
   }
   if (name === "tavily.search") {
@@ -410,6 +425,20 @@ function defaultToolMetadata(name: string) {
 }
 
 function defaultToolSchema(name: string) {
+  if (name === "run_python") {
+    return {
+      input: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          purpose: { type: "string" },
+          svg: { type: "string" },
+          content_base64: { type: "string" },
+          mime_type: { type: "string", enum: ["image/png", "image/svg+xml", "image/jpeg"] },
+        },
+      },
+    };
+  }
   if (name === "web.search" || name === "tavily.search") {
     const providerProperty =
       name === "web.search"
@@ -417,7 +446,7 @@ function defaultToolSchema(name: string) {
             provider: {
               type: "string",
               enum: ["tavily", "mock"],
-              description: "Optional web_search provider override. Omit to use DATASWARM_WEB_SEARCH_PROVIDER or Tavily.",
+              description: "Optional web_search provider override. provider=mock requires explicit DATASWARM_MOCK_TOOLS=1.",
             },
           }
         : {};

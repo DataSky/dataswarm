@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  allowedDevOrigins: ["dataswarm-dev.metad.ai"],
+  serverExternalPackages: ["node:sqlite"],
 };
 
 export default nextConfig;

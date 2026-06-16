@@ -8,6 +8,9 @@ import { listAllSkills } from "@/server/repositories/skills";
 import { ConversationWorkspace } from "./ui/conversation-workspace";
 import { WorkspaceSidebar } from "./ui/workspace-sidebar";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 type HomeProps = {
   searchParams: Promise<{
     conversationId?: string;

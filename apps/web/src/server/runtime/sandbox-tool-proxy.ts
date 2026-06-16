@@ -25,7 +25,8 @@ export type SandboxToolProxyConfig = {
   authMode: "signed_token";
 };
 
-const DEFAULT_SANDBOX_ALLOWED_TOOLS = ["web.search", "file.read", "artifact.create", "trace.query"];
+const DEFAULT_SANDBOX_ALLOWED_TOOLS = ["web.search", "file.read", "artifact.create", "trace.query", "run_python"];
+const REQUIRED_V4_CAPABILITIES = ["web.search", "file.read", "artifact.create", "trace.query", "run_python"];
 const TOKEN_TTL_MS = 30 * 60 * 1000;
 
 export function sandboxAgentProtocol() {
@@ -83,26 +84,83 @@ export function getSandboxToolProxyReadiness() {
   const mode = sandboxToolProxyMode();
   const proxyUrl = sandboxToolProxyUrl();
   const capabilityInvokeUrl = sandboxCapabilityInvokeUrl();
+  const allowedTools = sandboxAllowedTools();
+  const manifest = buildCapabilityManifest(allowedTools);
+  const manifestNames = manifest.map((capability) => capability.name);
+  const missingRequiredCapabilities = REQUIRED_V4_CAPABILITIES.filter((name) => !manifestNames.includes(name));
   const urlConfigured = Boolean(proxyUrl || capabilityInvokeUrl);
   const localOnly = isLocalOnlyProxyUrl(proxyUrl) || isLocalOnlyProxyUrl(capabilityInvokeUrl);
-  const readyForExternalSandbox = mode !== "parent" || (urlConfigured && !localOnly);
-  const missingEnv =
-    mode === "parent" && !readyForExternalSandbox
+  const capabilitySurfaceReady = missingRequiredCapabilities.length === 0;
+  const readyForExternalSandbox = mode !== "parent" || (urlConfigured && !localOnly && capabilitySurfaceReady);
+  const missingEnv = [
+    ...(mode === "parent" && (!urlConfigured || localOnly)
       ? [
           "DATASWARM_SANDBOX_TOOL_PROXY_URL or DATASWARM_PUBLIC_BASE_URL must be a public URL reachable from E2B; URL file variants are also supported",
         ]
-      : [];
+      : []),
+    ...(capabilitySurfaceReady
+      ? []
+      : [`DATASWARM_SANDBOX_ALLOWED_TOOLS must include required V4 capabilities: ${missingRequiredCapabilities.join(", ")}`]),
+  ];
   return {
     mode,
     proxyUrlConfigured: Boolean(proxyUrl),
     capabilityInvokeUrlConfigured: Boolean(capabilityInvokeUrl),
     localOnly,
+    capabilitySurfaceReady,
+    allowedTools,
+    manifestNames,
+    missingRequiredCapabilities,
     readyForExternalSandbox,
     missingEnv,
     urls: {
       proxy: redactUrl(proxyUrl),
       capabilityInvoke: redactUrl(capabilityInvokeUrl),
     },
+  };
+}
+
+export function getSandboxCapabilityPlaneHealth() {
+  const readiness = getSandboxToolProxyReadiness();
+  const runtimeProfile = process.env.DATASWARM_RUNTIME_PROFILE || "unspecified";
+  const realProfile = runtimeProfile.startsWith("real");
+  const mockSignals = {
+    allowExplicitMock: process.env.DATASWARM_ALLOW_EXPLICIT_MOCK === "1",
+    mockModel: process.env.DATASWARM_MOCK_MODEL === "1",
+    mockTools: process.env.DATASWARM_MOCK_TOOLS === "1",
+    sandboxProviderMock: String(process.env.DATASWARM_SANDBOX_PROVIDER ?? "").toLowerCase() === "mock",
+    sandboxAgentModelMock: ["mock", "deterministic", "mock_actions"].includes(
+      String(process.env.DATASWARM_SANDBOX_AGENT_MODEL ?? "").toLowerCase(),
+    ),
+    sandboxToolProxyMock: ["mock", "disabled"].includes(String(process.env.DATASWARM_SANDBOX_TOOL_PROXY ?? "").toLowerCase()),
+  };
+  const mockContamination = Object.values(mockSignals).some(Boolean);
+  const manifest = buildCapabilityManifest(readiness.allowedTools);
+  const hardFailures = [
+    ...(realProfile && mockContamination ? ["real_runtime_mock_contamination"] : []),
+    ...(realProfile && readiness.mode !== "parent" ? ["real_runtime_parent_proxy_not_selected"] : []),
+    ...(realProfile && !readiness.readyForExternalSandbox ? ["real_runtime_proxy_not_ready_for_external_sandbox"] : []),
+    ...readiness.missingRequiredCapabilities.map((name) => `missing_required_capability:${name}`),
+  ];
+
+  return {
+    status: hardFailures.length === 0 ? "ready" : "failed",
+    runtimeProfile,
+    realProfile,
+    mockSignals,
+    mockContamination,
+    readiness,
+    capabilityPlane: {
+      version: "dataswarm.capability-plane.v4",
+      requiredCapabilities: REQUIRED_V4_CAPABILITIES,
+      manifest,
+    },
+    endpoints: {
+      toolProxy: readiness.urls.proxy,
+      capabilityInvoke: readiness.urls.capabilityInvoke,
+      health: "/api/internal/sandbox/health",
+    },
+    hardFailures,
   };
 }
 
@@ -152,9 +210,16 @@ function signSandboxToolProxyToken(claims: SandboxToolProxyClaims) {
   return `${payload}.${hmac(payload)}`;
 }
 
+function realRuntimeProfileEnabled() {
+  return String(process.env.DATASWARM_RUNTIME_PROFILE ?? "").startsWith("real");
+}
+
 function sandboxToolProxyMode(): "parent" | "mock" | "disabled" {
   const raw = (process.env.DATASWARM_SANDBOX_TOOL_PROXY ?? "parent").trim().toLowerCase();
   if (raw === "mock" || raw === "disabled") {
+    if (realRuntimeProfileEnabled()) {
+      throw new Error(`DATASWARM_RUNTIME_PROFILE=real* refuses DATASWARM_SANDBOX_TOOL_PROXY=${raw}. Use npm run dev:mock for mock mode.`);
+    }
     return raw;
   }
   return "parent";

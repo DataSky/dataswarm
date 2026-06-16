@@ -41,21 +41,23 @@ expect(
     /branch_definitions/.test(planner) &&
     /branchDefinitions/.test(planner) &&
     /branch\.instruction/.test(planner) &&
-    /branch\.model_profile/.test(planner),
-  "Planner should accept common model output aliases for branches.",
+    /branch\.model_profile/.test(planner) &&
+    /\.slice\(0, 10\)/.test(planner),
+  "Planner should accept common model output aliases for branches and preserve ten-way explicit swarm plans.",
 );
 
 expect(
   "planner validates branch contract",
   /function validateSwarmBranches/.test(planner) &&
-    /branches must include 1-6 branch definitions/.test(planner) &&
+    /branches must include 1-10 branch definitions/.test(planner) &&
     /branch \$\{index \+ 1\} requires instruction/.test(planner),
   "Invalid branch arrays should fail validation before sandbox execution.",
 );
 
 expect(
   "mock planner emits model-owned branches for e2e coverage",
-  /branches: \[/.test(modelProvider) &&
+  /buildMockSwarmBranches/.test(modelProvider) &&
+    /branches: mockSwarmBranches\.map/.test(modelProvider) &&
     /Gather task-specific facts/.test(modelProvider) &&
     /Design verification checks/.test(modelProvider),
   "Mock-mode production e2e should prove the action branch path, not only the fallback template.",
@@ -76,6 +78,19 @@ expect(
     /planSource: "model_roles"/.test(swarm) &&
     /planSource: "runtime_fallback"/.test(swarm),
   "Runtime should prefer model branches, then model roles, and only then fallback.",
+);
+
+expect(
+  "swarm preserves explicit user branch requirements",
+  /function extractExplicitBranchPlan/.test(swarm) &&
+    /\.\.\.branches\.map\(\(branch\) => branch\.instruction\)/.test(swarm) &&
+    /function specializeBranchInstruction/.test(swarm) &&
+    /Branch-specific explicit requirement/.test(swarm) &&
+    /Global swarm constraints/.test(swarm) &&
+    /seenRequirements/.test(swarm) &&
+    /branchLabelToIndex/.test(swarm) &&
+    /explicit_branch_requirements/.test(swarm),
+  "Explicit 分支 A/B/C requirements should become branch-specific instructions instead of being lost in generic planner branches.",
 );
 
 expect(
