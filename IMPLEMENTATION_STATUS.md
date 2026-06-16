@@ -1,3 +1,10 @@
+## 2026-06-17 Progress Note: local contract smoke for complex E2B benchmark gates
+
+- Added `scripts/e2b-complex-benchmark-contract-smoke.mjs` and package script `smoke:e2b-complex-benchmark-contract` to pin the V4.1 complex benchmark validation contract locally.
+- The smoke asserts that live complex benchmark validation rejects legacy compatibility actions, requires per-branch `real_model` action coverage, requires canonical action types, and checks image + substantive Markdown + substantive HTML artifact coverage.
+- The smoke also guards parent capability evidence requirements, ensuring future edits cannot silently remove `capability.invoke.completed` checks for `web.search`, `artifact.create`, and `run_python`.
+- This is a regression guard only; it does not claim live E2B completion and must be paired with the real `smoke:e2b-branch-complex-benchmark` once the public callback path is healthy.
+
 ## 2026-06-17 Progress Note: canonical complex E2B benchmark gates
 
 - Hardened `scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs` so complex live E2B benchmark validation now rejects legacy compatibility action names (`reflect`, `revise_query`, `verify_evidence`, `read_context`, `call_tool`, `create_artifact`) and requires canonical V4.1 action types only.

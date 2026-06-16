@@ -32,6 +32,7 @@
     "smoke:e2b-orchestrator-v3-parent-proxy": "DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY=1 node scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs",
     "smoke:e2b-orchestrator-v3-parent-proxy:localtunnel": "DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY=1 DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY_AUTOTUNNEL=localtunnel node scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs",
     "smoke:e2b-branch-complex-benchmark": "DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY=1 DATASWARM_E2B_ORCHESTRATOR_V3_COMPLEX_BENCHMARK=1 node scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs",
+    "smoke:e2b-complex-benchmark-contract": "node scripts/e2b-complex-benchmark-contract-smoke.mjs",
     "smoke:e2b-branch-complex-benchmark:localtunnel": "DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY=1 DATASWARM_E2B_ORCHESTRATOR_V3_COMPLEX_BENCHMARK=1 DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY_AUTOTUNNEL=localtunnel node scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs",
     "smoke:sandbox-tool-proxy": "node scripts/sandbox-tool-proxy-e2e-smoke.mjs",
     "smoke:swarm-verifier": "node scripts/swarm-verifier-smoke.mjs",
