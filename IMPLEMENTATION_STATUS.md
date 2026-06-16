@@ -108,6 +108,11 @@
 
 ## 2026-06-16 V4.1 Recovery Checkpoint
 
+- 增补 `scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs` 回调可达性闭环：当 parent mode 启用时，默认自动推导并透传 `DATASWARM_SANDBOX_CAPABILITY_INVOKE_URL` 到服务启动参数。
+- `verifyCallbackReachability` 检查范围从 `sandbox/tool-proxy` 入口扩展到 `capability invoke` 入口，避免能力通道只在部分端口可达导致的漏检。
+- 在 `localtunnel/cloudflare` 自动注入流程中，同时写入 parent proxy 与 capability invoke 两条真实回调 URL，增强后续 Phase 6/7 回调链路可复现性。
+- 该改动与前序 `deriveServiceBaseUrl` 修复联动，可避免原先将 `/api/internal/sandbox/tool-proxy` 错拼为 `.../tool-proxy/api/internal/sandbox/health` 的健康探测误报。
+
 ## 2026-06-16 Progress Note: branch artifact lineage linkage extension
 
 - Extended branch artifact lineage propagation in `apps/web/src/server/runtime/swarm.ts`:

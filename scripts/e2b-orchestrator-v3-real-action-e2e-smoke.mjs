@@ -30,6 +30,7 @@ const forceMockModel = (process.env.DATASWARM_E2B_ORCHESTRATOR_V3_MOCK_MODEL ?? 
 const tunnelReachabilityTimeoutMs = Number(process.env.DATASWARM_E2B_ORCHESTRATOR_V3_TUNNEL_REACHABILITY_MS ?? 18_000);
 let publicBaseUrl = process.env.DATASWARM_PUBLIC_BASE_URL || "";
 let parentProxyUrl = process.env.DATASWARM_SANDBOX_TOOL_PROXY_URL || publicBaseUrl || "";
+let parentCapabilityInvokeUrl = process.env.DATASWARM_SANDBOX_CAPABILITY_INVOKE_URL || "";
 const toolProxyMode = parentProxyMode ? "parent" : "mock";
 const results = [];
 let server;
@@ -55,6 +56,11 @@ if (!existsSync(templateReceiptPath) && !process.env.DATASWARM_E2B_TEMPLATE_BUIL
 if (parentProxyMode && hasTunnelConfig() && (isLocalOnlyUrl(parentProxyUrl) || isLocalOnlyUrl(publicBaseUrl))) {
   publicBaseUrl = "";
   parentProxyUrl = "";
+  parentCapabilityInvokeUrl = "";
+}
+
+if (parentProxyMode && !parentCapabilityInvokeUrl && parentProxyUrl && !isLocalOnlyUrl(parentProxyUrl)) {
+  parentCapabilityInvokeUrl = `${deriveServiceBaseUrl(parentProxyUrl)}/api/internal/capabilities/invoke`;
 }
 
 if (parentProxyMode && (!parentProxyUrl || isLocalOnlyUrl(parentProxyUrl)) && !hasTunnelConfig()) {
@@ -101,6 +107,7 @@ try {
       DATASWARM_SANDBOX_TOOL_PROXY: toolProxyMode,
       DATASWARM_SANDBOX_TOOL_PROXY_URL: parentProxyMode ? parentProxyUrl : (process.env.DATASWARM_SANDBOX_TOOL_PROXY_URL ?? ""),
       DATASWARM_SANDBOX_TOOL_PROXY_URL_FILE: parentProxyMode ? tunnelUrlFile : "",
+      DATASWARM_SANDBOX_CAPABILITY_INVOKE_URL: parentProxyMode ? parentCapabilityInvokeUrl : "",
       DATASWARM_PUBLIC_BASE_URL: publicBaseUrl || baseUrl,
       DATASWARM_PUBLIC_BASE_URL_FILE: parentProxyMode ? tunnelUrlFile : "",
       DATASWARM_SWARM_MAX_CONCURRENCY: "2",
@@ -120,6 +127,7 @@ try {
     tunnel = await startTunnel();
     publicBaseUrl = tunnel.url;
     parentProxyUrl = new URL("/api/internal/sandbox/tool-proxy", publicBaseUrl).toString();
+    parentCapabilityInvokeUrl = new URL("/api/internal/capabilities/invoke", publicBaseUrl).toString();
     mkdirSync(path.dirname(tunnelUrlFile), { recursive: true });
     writeFileSync(tunnelUrlFile, parentProxyUrl, "utf8");
     expect("localtunnel exposes parent proxy URL for live E2B", /^https:\/\//.test(parentProxyUrl), parentProxyUrl);
@@ -128,6 +136,15 @@ try {
   if (parentProxyMode) {
     const proxyReachability = await verifyCallbackReachability(parentProxyUrl);
     expect("parent proxy callback is externally reachable and exposes sandbox health", proxyReachability.ok, JSON.stringify(proxyReachability));
+
+    if (parentCapabilityInvokeUrl) {
+      const capabilityReachability = await verifyCallbackReachability(parentCapabilityInvokeUrl);
+      expect(
+        "capability invoke callback is externally reachable and exposes sandbox health",
+        capabilityReachability.ok,
+        JSON.stringify(capabilityReachability),
+      );
+    }
   }
 
   const snapshot = await fetch(`${baseUrl}/api/system/snapshot`).then((response) => response.json());
