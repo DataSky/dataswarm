@@ -13,9 +13,16 @@
 - Tenth implementation slice: removed implicit web.search mock fallback; missing Tavily credentials now fail the real tool path instead of returning mock sources, and provider=mock requires explicit mock opt-in so parent-proxied web.search evidence cannot be confused with real search.
 - Validation status: code changes are being staged intentionally without claiming live success. Static/local/live validation remains required before marking V4.1 complete.
 
+## 2026-06-16 V4.1 Hotfix Checkpoint
+
+- Fixed the immediate frontend build blocker by removing duplicate `uniqueStrings` helper declaration in `apps/web/src/server/runtime/swarm.ts`.
+- Confirmed the blocking error is addressed at source:
+  - `the name uniqueStrings is defined multiple times`
+- No live verification claims are made yet; next phases still require real E2B tool/proxy/finality smoke and complex benchmark replay for closure.
+
 # DataSwarm Implementation Status
 
-> Last updated: 2026-06-14
+> Last updated: 2026-06-16
 > Active goal: stabilize Agentic Runtime V2 and complete the gated path from planner-owned mock Swarm to real E2B sandbox execution.
 
 ## Current Canonical Status
