@@ -651,13 +651,22 @@ async function verifyCallbackReachability(baseUrl) {
 function deriveServiceBaseUrl(rawUrl) {
   try {
     const parsed = new URL(rawUrl);
-    const knownToolPaths = ["/api/internal/sandbox/tool-proxy", "/api/internal/capabilities/invoke"];
-    for (const suffix of knownToolPaths) {
-      if (parsed.pathname === suffix || parsed.pathname.startsWith(`${suffix}/`)) {
-        return `${parsed.origin}${parsed.pathname.slice(0, -suffix.length) || ""}`.replace(/\/$/, "");
+    const knownServicePrefixes = [
+      "/api/internal/sandbox/tool-proxy",
+      "/api/internal/capabilities/invoke",
+      "/api/internal/sandbox/health",
+      "/api/system/snapshot",
+    ];
+    const normalizedPathname = parsed.pathname.replace(/\/$/, "");
+    for (const suffix of knownServicePrefixes) {
+      if (normalizedPathname === suffix || normalizedPathname.startsWith(`${suffix}/`)) {
+        return `${parsed.origin}`.replace(/\/$/, "");
       }
     }
-    return rawUrl.replace(/\/$/, "");
+    if (parsed.pathname === "/" || parsed.pathname === "") {
+      return parsed.origin;
+    }
+    return `${parsed.origin}${parsed.pathname.replace(/\/$/, "")}`;
   } catch {
     return rawUrl.replace(/\/$/, "");
   }

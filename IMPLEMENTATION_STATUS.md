@@ -2573,3 +2573,13 @@ Validation status:
 - 同时确认前置条件已基本恢复：`dataswarm-dev.metad.ai` 外网 `health/snapshot` 可访问（HTTP 200 + JSON）。
 
 待下一步：需要修复 parent-proxy 可达性校验基址与能力调用证据入库在该入口的关联逻辑。
+## 2026-06-16 Checkpoint: parent-proxy reachability derivation hardened
+
+- 调整 `scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs` 的 `deriveServiceBaseUrl`：当 URL 直接命中 `/api/internal/...` 工具/能力/健康链路前缀时，回退到服务根域名进行探测，避免再次拼接出 `.../tool-proxy/api/internal/sandbox/health` 这类 404 HTML 路径。
+- 目标是让 `verifyCallbackReachability` 在真实域名与隧道回调地址下只输出服务状态 JSON；并确保 `DATASWARM_SANDBOX_TOOL_PROXY_URL` 与 `DATASWARM_SANDBOX_CAPABILITY_INVOKE_URL` 都能通过同一归一化入口。
+- 下一步证据动作：重新跑 `smoke:e2b-orchestrator-v3-parent-proxy`，重点观察 `verifyCallbackReachability` 与 `parent_proxy_coverage/successful_tool_call_coverage` 是否从 `health body invalid JSON` 阻塞解除。
+
+Validation status:
+
+- Static/runtime validation was not executed in this slice.
+- This checkpoint is implementation progress only; full pass still requires branch evidence gates to be satisfied by rerun.
