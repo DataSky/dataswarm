@@ -19,6 +19,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 from io import BytesIO
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List
@@ -2888,28 +2889,109 @@ def call_parent_tool(job: Dict[str, Any], action_id: str, tool_name: str, tool_i
         "toolName": tool_name,
         "input": tool_input,
     }
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            raw = response.read().decode("utf-8")
-        parsed = json.loads(raw)
-        if isinstance(parsed, dict):
-            return parsed
-        return {"status": "failed", "error": {"code": "invalid_proxy_response", "message": "Proxy returned non-object JSON."}}
-    except urllib.error.HTTPError as exc:
-        body_preview = ""
-        try:
-            body_preview = exc.read().decode("utf-8", errors="replace")[:1000]
-        except Exception:
-            body_preview = ""
-        return {"status": "failed", "error": {"code": "proxy_http_error", "status": exc.code, "message": body_preview}}
-    except Exception as exc:
-        return {"status": "failed", "error": {"code": "proxy_request_failed", "message": str(exc)[:500], "errorType": exc.__class__.__name__}}
+    parsed_url = urlparse(url)
+    origin = f"{parsed_url.scheme}://{parsed_url.netloc}" if parsed_url.scheme and parsed_url.netloc else ""
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Accept-Encoding": "gzip, deflate, br",
+        "User-Agent": "DataSwarm-E2B-Sandbox-Agent/1.0",
+        "Origin": origin,
+        "Referer": f"{origin}/",
+        "X-Requested-With": "DataSwarmSandboxAgent",
+    }
+    endpoints = [url]
+    if "/api/internal/capabilities/invoke" in url:
+        endpoints.append(url.replace("/api/internal/capabilities/invoke", "/api/internal/sandbox/tool-proxy"))
+    elif "/api/internal/sandbox/tool-proxy" in url:
+        endpoints.append(url.replace("/api/internal/sandbox/tool-proxy", "/api/internal/capabilities/invoke"))
+    # Keep endpoint order stable while deduping.
+    deduped_endpoints: List[str] = []
+    for endpoint in endpoints:
+        if endpoint not in deduped_endpoints:
+            deduped_endpoints.append(endpoint)
+    payload_bytes = json.dumps(body).encode("utf-8")
+    last_error: Dict[str, Any] | None = None
+
+    for endpoint in deduped_endpoints:
+        for attempt in (1, 2):
+            if attempt > 1:
+                time.sleep(0.7)
+            try:
+                request = urllib.request.Request(
+                    endpoint,
+                    data=payload_bytes,
+                    headers=headers,
+                    method="POST",
+                )
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    raw = response.read().decode("utf-8")
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    parsed["endpoint"] = endpoint
+                    parsed["attempt"] = attempt
+                    return parsed
+                return {
+                    "status": "failed",
+                    "error": {
+                        "code": "invalid_proxy_response",
+                        "message": "Proxy returned non-object JSON.",
+                        "endpoint": endpoint,
+                        "attempt": attempt,
+                    },
+                }
+            except urllib.error.HTTPError as exc:
+                body_preview = ""
+                try:
+                    body_preview = exc.read().decode("utf-8", errors="replace")[:1200]
+                except Exception:
+                    body_preview = ""
+                if exc.code in {500, 502, 503, 504, 429, 408, 520, 521, 523} and attempt < 2:
+                    last_error = {
+                        "status": exc.code,
+                        "message": body_preview or f"{exc.__class__.__name__}: {exc.reason}",
+                        "endpoint": endpoint,
+                        "attempt": attempt,
+                    }
+                    continue
+                last_error = {
+                    "status": exc.code,
+                    "message": body_preview,
+                    "endpoint": endpoint,
+                    "attempt": attempt,
+                }
+                break
+            except Exception as exc:
+                message = str(exc)[:500]
+                if attempt < 2:
+                    last_error = {
+                        "message": message,
+                        "errorType": exc.__class__.__name__,
+                        "endpoint": endpoint,
+                        "attempt": attempt,
+                    }
+                    continue
+                last_error = {
+                    "message": message,
+                    "errorType": exc.__class__.__name__,
+                    "endpoint": endpoint,
+                    "attempt": attempt,
+                }
+                break
+        if last_error is None:
+            continue
+
+    return {
+        "status": "failed",
+        "error": {
+            "code": "proxy_http_error",
+            "status": last_error.get("status"),
+            "message": last_error.get("message", ""),
+            "endpoint": last_error.get("endpoint"),
+            "attempt": last_error.get("attempt"),
+            "errorType": last_error.get("errorType"),
+        },
+    }
 
 
 def build_branch_final(
