@@ -387,3 +387,19 @@ Validation status:
 
 - Not yet validated in this slice.
 - Required next check: parent-proxied `artifact.create` smoke proving auto-filled sourceObservationIds and substantive content reach parent artifact metadata.
+
+## 2026-06-16 Checkpoint: phase 4/5 tool-plane closure smoke refresh
+
+- 最新一轮本地验收重跑如下：
+  - `npm run smoke:swarm-parallel` ✅（8/8）
+  - `npm run smoke:swarm-verifier` ✅（12/12）
+  - `npm run smoke:sandbox-tool-proxy` ✅（47/47）
+- `smoke:sandbox-tool-proxy` 已覆盖并确认：
+  - `web.search`、`artifact.create`、`file.read`、`trace.query` 的 `tool_call + observation + capability.invoke (started/completed) + sandbox.tool_proxy` 全链路落库；
+  - `trace.query` 的 `conversation_id: "current"` 场景会写 `usedActiveConversationFallback=true` 与 `resolvedConversationId`；
+  - `capability_event_count=12`，`proxy_event_count=12`，满足真实能力面闭环证据要求。
+- `npm run smoke:e2b-orchestrator-v3-parent-proxy:localtunnel` 受外部环境影响失败（`npx -y localtunnel --port 3234` 未返回 URL）。
+- 下一步：使用真实可达的 Cloudflare named domain（`dataswarm-dev.metad.ai`）继续执行
+  - `npm run smoke:e2b-orchestrator-v3-parent-proxy`
+  - `npm run smoke:e2b-orchestrator-v3-parent-proxy:localtunnel`（替换为可用隧道命令）
+  - `npm run smoke:e2b-branch-complex-benchmark`

@@ -8,6 +8,17 @@
   - 目标是避免“服务看似启动但 callback 不可达”导致的 parent-proxy 伪成功体验。
 - 这一步是 Phase 6/7 真实 E2B 验收前置门禁：只有回调可达时才允许继续 parent-proxy / complex benchmark 进程。
 
+## 2026-06-16 Progress Note: phase 4 / 5 smoke validation refresh
+
+- 本轮再次执行关键本地闭环验收（无 mock 漏洞）：
+  - `npm run smoke:swarm-parallel` ✅（8/8）
+  - `npm run smoke:swarm-verifier` ✅（12/12）
+  - `npm run smoke:sandbox-tool-proxy` ✅（47/47）
+- `smoke:sandbox-tool-proxy` 验证点覆盖到位：
+  - `tool.search` / `artifact.create` / `trace.query` / capability 调用都具备 `tool_call + Observation + capability.invoke + sandbox.tool_proxy` 证据闭环；
+  - `trace_query` 在输入 `conversation_id: "current"` 时出现 `usedActiveConversationFallback=true` 并写入 `resolvedConversationId`，满足 `trace.query` active-context 回退与证据要求。
+- 同期执行 `npm run smoke:e2b-orchestrator-v3-parent-proxy:localtunnel` 失败：`localtunnel` 命令未返回 URL（`npx -y localtunnel --port 3234` 无 stdout），属于外部隧道依赖问题，不是 runtime 判定逻辑；真实入口验证仍需可用的 Cloudflare named tunnel 回环。
+
 ## 2026-06-16 Progress Note: e2b-v3-real-action smoke now hard-fails on non-reachable proxy path
 
 - `scripts/e2b-sandbox-v3-real-action-smoke.mjs` now rejects local-only/proxy-only URLs (`localhost`, `127.0.0.1`, `host.docker.internal`, non-HTTPS) and exits as SKIP with an explicit message unless an HTTPS public callback URL is configured.
