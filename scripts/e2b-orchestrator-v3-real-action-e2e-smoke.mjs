@@ -663,7 +663,7 @@ async function waitForValidReachabilityResult(fullUrl, check, attempts = 4, chec
       return {
         ok: false,
         status: result.status,
-        reason: result.body?.slice(0, 220) ?? result.statusText ?? "unreachable",
+        reason: result.bodyPreview ?? result.body?.slice(0, 220) ?? result.statusText ?? "unreachable",
         parsed: false,
         attempts: index,
       };
@@ -762,7 +762,8 @@ async function probeUrl(url, options = {}) {
       ok: response.status >= 200 && response.status < 300,
       status: response.status,
       statusText: response.statusText,
-      body: body.slice(0, 1200),
+      body,
+      bodyPreview: body.slice(0, 220),
     };
   } catch (error) {
     return {
@@ -770,6 +771,7 @@ async function probeUrl(url, options = {}) {
       status: 0,
       statusText: "error",
       body: String(error?.message ?? error),
+      bodyPreview: String(error?.message ?? error).slice(0, 220),
     };
   }
 }
