@@ -2558,3 +2558,18 @@ Validation status:
 
 - Static/runtime validation was not executed in this slice.
 - This checkpoint is implementation progress only; it still needs real model action smoke and parent-proxied `artifact.create` replay.
+
+## 2026-06-16 Progress Note: parent-proxy e2e passes runtime warmup but collapses on proxy evidence closure
+
+- 本轮 `smoke:e2b-orchestrator-v3-parent-proxy` 已成功完成 3 分支 real E2B 并行运行并进入 run/merge/verify 主链路：
+  - `PASS real e2b V3 orchestrator server healthy`
+  - `PASS real e2b V3 swarm message accepted`
+  - `PASS run completed`（`run_600...`）
+  - `PASS branch started events` / `PASS reduce waits for branch observations`
+- 但验证终止于两类硬性失败：
+  1) `verifyCallbackReachability` 仍报 `health body invalid JSON`（当时 `parent proxy base` 与 `capability base` 被判定返回 200 HTML）
+  2) `swarm.verify` 多项硬失败，核心为：缺失 `swarm.branch.final.materialized`、缺失能力/代理完成事件（capability/proxy/tool_call）与 `run_600` 级别工具覆盖
+- 观察到的关键数据特征：`required_tool_call_coverage`、`capability_event_coverage`、`parent_proxy_coverage`、`web_search_observation_coverage`、`run_python_image_artifact_coverage` 等多项仍失败，说明本次循环中沙箱虽有动作与部分 artifact，但未能通过 `artifact.create/run_python/trace.query` 的统一 parent-capability 证据链回灌为 `tool_calls + run_events`。
+- 同时确认前置条件已基本恢复：`dataswarm-dev.metad.ai` 外网 `health/snapshot` 可访问（HTTP 200 + JSON）。
+
+待下一步：需要修复 parent-proxy 可达性校验基址与能力调用证据入库在该入口的关联逻辑。
