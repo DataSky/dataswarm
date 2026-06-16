@@ -2,6 +2,7 @@
 
 - Tightened conversation diagnostics model-call replay semantics to match `swarm.verify`: `sandboxModelEventCount` and replayability now count only terminal `sandbox.agent.model_call_completed` / `sandbox.agent.model_call_failed` events.
 - Added `sandboxModelStartedEventCount` as an auxiliary diagnostics field so started-but-never-finished model calls remain visible without making trace replayability look complete.
+- Added a `trace-diagnostics-ui-smoke` static guard so diagnostics cannot regress to counting started-only model calls as terminal replay evidence.
 - This removes a subtle false-positive path where diagnostics could appear replayable from `model_call_started` evidence even though the verifier requires terminal model-call evidence.
 
 ## 2026-06-17 Progress Note: diagnostics replayability evidence alignment

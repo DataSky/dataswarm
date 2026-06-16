@@ -5,6 +5,7 @@ const root = process.cwd();
 const results = [];
 
 const runTracePage = read("apps/web/src/app/runs/[id]/page.tsx");
+const diagnosticsRepository = read("apps/web/src/server/repositories/diagnostics.ts");
 const packageJson = JSON.parse(read("package.json"));
 const canonicalRunner = read("scripts/canonical-verification-runner.mjs");
 const status = read("IMPLEMENTATION_STATUS.md");
@@ -53,6 +54,16 @@ expect(
     /recommendedAction/.test(runTracePage) &&
     /verificationCommands/.test(runTracePage),
   "Diagnostics should be actionable and verification-oriented.",
+);
+expect(
+  "diagnostics separates started and terminal sandbox model events",
+  /sandboxModelStartedEvents/.test(diagnosticsRepository) &&
+    /sandbox\.agent\.model_call_started/.test(diagnosticsRepository) &&
+    /sandbox\.agent\.model_call_completed/.test(diagnosticsRepository) &&
+    /sandbox\.agent\.model_call_failed/.test(diagnosticsRepository) &&
+    /sandboxModelStartedEventCount/.test(diagnosticsRepository) &&
+    /sandboxModelEventCount/.test(diagnosticsRepository),
+  "Trace replayability should not treat started-only sandbox model calls as terminal real-model evidence.",
 );
 expect(
   "trace diagnostics smoke includes UI gate",
