@@ -23,6 +23,12 @@ const receiptPath = path.resolve(
   root,
   process.env.DATASWARM_E2B_V3_REAL_ACTION_RECEIPT ?? path.join("data", "e2b", "live-smoke-receipt-v3-real-action.json"),
 );
+const publicBaseUrl = process.env.DATASWARM_PUBLIC_BASE_URL || "";
+const publicBaseUrlFile = process.env.DATASWARM_PUBLIC_BASE_URL_FILE || "";
+const proxyUrl = resolveProxyUrl(
+  process.env.DATASWARM_SANDBOX_TOOL_PROXY_URL || process.env.DATASWARM_SANDBOX_TOOL_PROXY_URL_FILE || publicBaseUrl || publicBaseUrlFile,
+);
+const parentProxyMode = proxyUrl && !proxyUrl.includes("host.docker.internal") ? "parent" : "mock";
 const agentPath = path.join(root, "sandbox", "agent", "dataswarm_sandbox_agent.py");
 const agentSource = readFileSync(agentPath, "utf8");
 
@@ -65,6 +71,7 @@ const job = {
   toolCatalog: [
     { name: "web.search", capability: "web_search", adapterMode: "parent", risk: "low" },
     { name: "artifact.create", capability: "artifact_create", adapterMode: "parent", risk: "low" },
+    { name: "trace.query", capability: "trace_query", adapterMode: "parent", risk: "low" },
     { name: "run_python", capability: "visualization", adapterMode: "local", risk: "medium" },
   ],
   skillManifests: [
@@ -79,11 +86,18 @@ const job = {
     },
   ],
   parentToolProxy: {
-    mode: "mock",
-    url: "",
+    mode: parentProxyMode,
+    url: proxyUrl ? `${proxyUrl.replace(/\/$/, "")}/api/internal/sandbox/tool-proxy` : "",
     proxySessionToken: "mock-e2b-v3-real-action-token",
-    allowedTools: ["web.search", "artifact.create"],
+    allowedTools: ["web.search", "artifact.create", "trace.query"],
     authMode: "signed_token",
+  },
+  capabilityPlane: {
+    invokeUrl: proxyUrl ? `${proxyUrl.replace(/\/$/, "")}/api/internal/capabilities/invoke` : "",
+    enabledCapabilities: ["web_search", "artifact_create", "file_read", "trace_query", "visualization"],
+    manifestPath: "sandbox://capability-plane/smoke.json",
+    version: "v1",
+    invocationMode: parentProxyMode,
   },
   artifactPolicy: {
     allowedKinds: ["markdown", "html", "json", "csv", "image"],
@@ -97,8 +111,8 @@ const job = {
     apiKeyEnv: "DEEPSEEK_API_KEY",
     authScheme: process.env.DATASWARM_SANDBOX_AGENT_AUTH_SCHEME || (deepseekBaseUrl.includes("api.deepseek.com") ? "bearer" : "raw"),
     jsonMode: true,
-    actionMaxTokens: Number(process.env.DATASWARM_SANDBOX_AGENT_ACTION_MAX_TOKENS ?? 900),
-    maxTokens: Number(process.env.DATASWARM_SANDBOX_AGENT_MAX_TOKENS ?? 1200),
+    actionMaxTokens: Number(process.env.DATASWARM_SANDBOX_AGENT_ACTION_MAX_TOKENS ?? 1600),
+    maxTokens: Number(process.env.DATASWARM_SANDBOX_AGENT_MAX_TOKENS ?? 1600),
     timeoutSeconds: Number(process.env.DATASWARM_SANDBOX_AGENT_TIMEOUT_SECONDS ?? 60),
   },
 };
@@ -301,4 +315,16 @@ function redactSecrets(value) {
     .replace(/(^|[^A-Za-z0-9_-])e2b_[A-Za-z0-9_-]{20,}/g, "$1[REDACTED_E2B_KEY]")
     .replace(/tvly-[A-Za-z0-9_-]{12,}/g, "[REDACTED_TAVILY_KEY]")
     .replace(/sk-[A-Za-z0-9_-]{12,}/g, "[REDACTED_SECRET]");
+}
+
+function resolveProxyUrl(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (existsSync(trimmed)) {
+    const fileValue = readFileSync(trimmed, "utf8").trim();
+    return fileValue.replace(/\\n/g, "").trim();
+  }
+  return trimmed;
 }

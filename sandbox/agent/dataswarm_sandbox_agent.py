@@ -578,6 +578,30 @@ def normalize_agent_action(candidate: Dict[str, Any] | None) -> Dict[str, Any] |
     }
     if action_type in aliases:
         action = {**action, "type": aliases[action_type]}
+    if action.get("type") in {"", None}:
+        inferred_type = ""
+        if action.get("toolName") or action.get("tool") or action.get("tool_name") or action.get("name"):
+            inferred_type = "run_python" if as_text(action.get("toolName")) == "run_python" else "call_tool"
+        elif action.get("artifactType") or action.get("content") or action.get("markdown") or action.get("html") or action.get("json"):
+            inferred_type = "create_artifact"
+        elif action.get("path") and not action.get("query"):
+            inferred_type = "file.read"
+        elif action.get("query") and not action.get("scope"):
+            inferred_type = "web.search"
+        elif action.get("scope") or (isinstance(action.get("query"), dict) and action.get("query").get("scope") == "conversation"):
+            inferred_type = "trace.query"
+        elif action.get("code") or action.get("script") or action.get("expression") or as_text(action.get("purpose")) == "visualization":
+            inferred_type = "run_python"
+        elif action.get("newQuery") or action.get("neededContext") or action.get("context"):
+            inferred_type = "revise_query" if action.get("newQuery") else "request_more_context"
+        elif action.get("observationIds") or action.get("artifactIds") or action.get("claims"):
+            inferred_type = "verify_evidence"
+        elif action.get("answer") or action.get("summary") or action.get("final"):
+            inferred_type = "final_answer"
+        elif action.get("thought") or action.get("summary") or action.get("analysis"):
+            inferred_type = "thought"
+        if inferred_type:
+            action = {**action, "type": inferred_type}
     tool_type_aliases = {
         "web.search": "web.search",
         "web_search": "web.search",
@@ -2105,6 +2129,54 @@ def run_v3(job: Dict[str, Any]) -> Dict[str, Any]:
                 tool_input = record_input(action.get("input"))
                 if tool_name == "artifact.create":
                     tool_input = ensure_artifact_create_input(tool_input, observations, job, agent_name)
+                    tool_input["sourceObservationIds"] = tool_input.get("sourceObservationIds") or [
+                        item["observationId"] for item in observations if item.get("observationId")
+                    ]
+                if tool_name == "run_python":
+                    emit(
+                        "sandbox.agent.tool.requested",
+                        "Sandbox requested local run_python.",
+                        {"branchId": branch_id, "actionId": action_id, "toolName": "run_python", "input": tool_input, "actionSource": source},
+                    )
+                    image_artifact = build_plot_image_artifact(job, branch_id, agent_name)
+                    if image_artifact:
+                        image_artifact["createdByActionId"] = action_id
+                        image_artifact["localSandboxObservationIds"] = []
+                        local_artifacts.append(image_artifact)
+                        image_observation = record_observation(
+                            f"sbo_v3_{step:02d}_python",
+                            action_id,
+                            "artifact",
+                            f"Created local image artifact {image_artifact['filename']} via call_tool run_python.",
+                            {"artifact": artifact_public_manifest(image_artifact), "toolName": "run_python", "actionSource": source},
+                        )
+                        image_artifact["localSandboxObservationIds"] = [image_observation["observationId"]]
+                        emit(
+                            "sandbox.agent.artifact.created",
+                            "Sandbox branch created image artifact from run_python call_tool.",
+                            {
+                                "branchId": branch_id,
+                                "actionId": action_id,
+                                "artifact": artifact_public_manifest(image_artifact),
+                                "toolName": "run_python",
+                                "actionSource": source,
+                            },
+                        )
+                        emit(
+                            "sandbox.agent.tool.completed",
+                            "Sandbox call_tool run_python completed locally.",
+                            {"branchId": branch_id, "actionId": action_id, "toolName": "run_python", "actionSource": source},
+                        )
+                        tool_call_success_count += 1
+                    else:
+                        tool_call_failure_count += 1
+                        emit(
+                            "sandbox.agent.tool.failed",
+                            "Sandbox local run_python call_tool failed.",
+                            {"branchId": branch_id, "actionId": action_id, "toolName": "run_python", "actionSource": source},
+                        )
+                    record_action(action_id, "run_python", "completed", f"Sandbox agent completed {action_type}.", {"actionSource": source})
+                    continue
                 emit(
                     "sandbox.agent.tool.requested",
                     f"Sandbox requested parent tool {tool_name}.",
@@ -2153,10 +2225,52 @@ def run_v3(job: Dict[str, Any]) -> Dict[str, Any]:
                         "values": [82, 68, 45, 74],
                         "sourceObservationIds": [item["observationId"] for item in observations if item.get("observationId")],
                     }
+                run_python_tool_entry = None
+                for entry in job.get("toolCatalog", []):
+                    if as_text(entry.get("name")) == "run_python":
+                        run_python_tool_entry = entry if isinstance(entry, dict) else {}
+                        break
+                run_python_adapter = as_text(
+                    run_python_tool_entry.get("adapterMode") if isinstance(run_python_tool_entry, dict) else None,
+                    "parent",
+                )
+                if run_python_adapter != "parent":
+                    image_artifact = build_plot_image_artifact(job, branch_id, agent_name)
+                    if image_artifact:
+                        image_artifact["createdByActionId"] = action_id
+                        image_artifact["localSandboxObservationIds"] = []
+                        local_artifacts.append(image_artifact)
+                        observation = record_observation(
+                            f"sbo_v3_{step:02d}_python",
+                            action_id,
+                            "artifact",
+                            f"Created local image artifact {image_artifact['filename']} via run_python local adapter.",
+                            {"artifact": artifact_public_manifest(image_artifact), "toolInput": run_python_input, "actionSource": source},
+                        )
+                        image_artifact["localSandboxObservationIds"] = [observation["observationId"]]
+                        emit(
+                            "sandbox.agent.artifact.created",
+                            "Sandbox agent created image artifact from run_python local adapter.",
+                            {"branchId": branch_id, "actionId": action_id, "artifact": artifact_public_manifest(image_artifact), "actionSource": source},
+                        )
+                        emit(
+                            "sandbox.agent.tool.completed",
+                            "Sandbox run_python completed via local adapter.",
+                            {"branchId": branch_id, "actionId": action_id, "toolName": "run_python", "adapter": run_python_adapter, "actionSource": source},
+                        )
+                        tool_call_success_count += 1
+                    else:
+                        tool_call_failure_count += 1
+                        emit(
+                            "sandbox.agent.tool.failed",
+                            "Sandbox run_python local adapter did not return an image artifact.",
+                            {"branchId": branch_id, "actionId": action_id, "toolName": "run_python", "actionSource": source},
+                        )
+                    continue
                 emit(
                     "sandbox.agent.tool.requested",
                     "Sandbox requested parent tool run_python.",
-                    {"branchId": branch_id, "actionId": action_id, "toolName": "run_python", "input": run_python_input, "actionSource": source},
+                    {"branchId": branch_id, "actionId": action_id, "toolName": "run_python", "input": run_python_input, "adapter": run_python_adapter, "actionSource": source},
                 )
                 tool_observation = call_parent_tool(job, action_id, "run_python", run_python_input)
                 if tool_observation.get("status") != "failed":
