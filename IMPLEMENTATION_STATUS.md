@@ -3,6 +3,7 @@
 - Aligned `apps/web/src/server/repositories/diagnostics.ts` with the stricter V4.1 `trace_diagnostics_replayability` verifier gate.
 - Conversation diagnostics now expose branch contract/final materialization counts, sandbox action events, sandbox observation events, and sandbox model-call events directly in `swarmEvidence.traceReplayability` and the diagnosis text.
 - Fixed a diagnostics event-name blind spot: sandbox observation replay now recognizes `sandbox.agent.observation.created` and legacy `sandbox.agent.observation_created`, not only the older `sandbox.agent.observation` name.
+- Branch evidence matrix rows now include per-branch sandbox model-call completion/failure counts, using parent-forwarded `branch_id` metadata from sandbox events.
 - This improves `conversationId` replay fidelity for proving real sandbox ReAct loops and avoids undercounting real sandbox observations during branch evidence matrix analysis.
 
 ## 2026-06-17 Progress Note: stricter trace diagnostics replayability gate

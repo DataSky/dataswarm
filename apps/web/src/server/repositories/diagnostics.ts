@@ -535,6 +535,7 @@ function buildSwarmEvidenceSummary(events: Row[], toolCalls: Row[], observations
     proxyFailedEvents,
     sandboxActionEvents,
     sandboxObservationEvents,
+    sandboxModelEvents,
     branchContractMaterializedEvents,
     branchFinalMaterializedEvents,
     toolCalls,
@@ -665,6 +666,7 @@ function buildBranchEvidenceMatrix(input: {
   proxyFailedEvents: Row[];
   sandboxActionEvents: Row[];
   sandboxObservationEvents: Row[];
+  sandboxModelEvents: Row[];
   branchContractMaterializedEvents: Row[];
   branchFinalMaterializedEvents: Row[];
   toolCalls: Row[];
@@ -795,6 +797,15 @@ function buildBranchEvidenceMatrix(input: {
     const branchObservationEventPayloads = input.sandboxObservationEvents
       .map((event): Record<string, unknown> => payloadOf(event))
       .filter((event) => payloadBranchId(event) === branchId);
+    const branchModelEventPayloads = input.sandboxModelEvents
+      .map((event): Record<string, unknown> => ({ ...payloadOf(event), eventType: String(event.event_type ?? "") }))
+      .filter((event) => payloadBranchId(event) === branchId);
+    const modelCallCompletedEventCount = branchModelEventPayloads.filter(
+      (event) => String(event.eventType ?? event.event_type ?? "") === "sandbox.agent.model_call_completed",
+    ).length;
+    const modelCallFailedEventCount = branchModelEventPayloads.filter(
+      (event) => String(event.eventType ?? event.event_type ?? "") === "sandbox.agent.model_call_failed",
+    ).length;
     const eventRealModelActionCount = branchActionEventPayloads.filter(
       (event) => String(event.actionSource ?? event.action_source ?? "") === "real_model" && String(event.status ?? "") === "proposed",
     ).length;
@@ -903,6 +914,8 @@ function buildBranchEvidenceMatrix(input: {
       branchFinalMaterializedEventCount,
       realModelActionCount,
       eventRealModelActionCount,
+      modelCallCompletedEventCount,
+      modelCallFailedEventCount,
       eventMockModelActionCount,
       eventFallbackActionCount,
       minimumRealModelActions,
