@@ -7,7 +7,7 @@ V4.1 turns the V4 E2B ReAct swarm from a runnable branch system into an evidence
 - Latest continuation note (2026-06-16): strengthened `trace.query` active-context fallback in `apps/web/src/server/tools/registry.ts` so missing/alias `conversation_id` can resolve to the active conversation automatically instead of failing as invalid target. This is tracked in
   `IMPLEMENTATION_STATUS.md` under "trace.query active-context fallback hardening".
 - 进一步落地：`scripts/sandbox-tool-proxy-e2e-smoke.mjs` 已加入 `trace.query` 的 parent proxy alias 回归（`conversation_id: "current"`），并要求回退事件元数据记录 `usedActiveConversationFallback`，用于 `conversationId` 可追溯性验收。
-- 2026-06-16 追加：默认 real 启动的 mock 污染检测增强。`scripts/dev-real.mjs` 与 `scripts/dev-real-cloudflare-tunnel.mjs` 已同时识别 `DATASWARM_ALLOW_EXPLICIT_MOCK / DATASWARM_MOCK_MODEL / DATASWARM_MOCK_TOOLS` 常见 truthy 值（`1`/`true`/`yes`/`on`），避免默认 dev 流程误入 mock。
+- 2026-06-16 追加：默认 real 启动的 mock 污染检测增强。`scripts/dev-real.mjs` 与 `scripts/dev-real-cloudflare-tunnel.mjs` 已同时识别 `DATASWARM_ALLOW_EXPLICIT_MOCK / DATASWARM_MOCK_MODEL / DATASWARM_MOCK_TOOLS` 常见 truthy 值（`1`/`true`/`yes`/`on`），并优化拒绝日志输出为真实环境变量值，避免出现函数定义噪音，便于现场复盘。
 
 ## Current Baseline
 

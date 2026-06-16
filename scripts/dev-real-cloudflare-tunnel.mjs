@@ -44,10 +44,11 @@ const mockViolations = forbiddenMockEnv.filter(([key, forbidden]) => {
 });
 
 if (mockViolations.length > 0) {
+  const formattedViolations = mockViolations.map(([key]) => `${key}=${process.env[key]}`);
   process.stderr.write(
     [
       "DataSwarm real tunnel startup refused because mock/degraded env was detected.",
-      ...mockViolations.map(([key, value]) => "- " + key + "=" + value),
+      ...formattedViolations.map((line) => "- " + line),
       "Use `npm run dev:mock` for explicit mock mode, or unset these variables before real tunnel startup.",
     ].join("\n") + "\n",
   );

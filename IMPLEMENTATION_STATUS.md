@@ -2,7 +2,7 @@
 
 - `scripts/dev-real.mjs` 与 `scripts/dev-real-cloudflare-tunnel.mjs` 的 mock 污染检测已增强：`DATASWARM_ALLOW_EXPLICIT_MOCK / DATASWARM_MOCK_MODEL / DATASWARM_MOCK_TOOLS` 现在识别 `1/true/yes/on` 等常见真值，并继续阻断启动，避免环境变量残留导致默认 real 启动误入 mock 模式。
 - `DATASWARM_SANDBOX_AGENT_MODEL=mock|deterministic`、`DATASWARM_SANDBOX_TOOL_PROXY=mock|disabled`、`DATASWARM_SANDBOX_PROVIDER=mock` 等仍按既有约束直接拒绝。
-- 目标对齐：继续贯彻“默认真实模式”要求，确保本地服务误启动时有明确、可回放的拒绝行为。
+- 目标对齐：继续贯彻“默认真实模式”要求，确保本地服务误启动时有明确、可回放的拒绝行为；拒绝日志会展示真实环境变量取值而非规则函数内容。
 
 ## 2026-06-16 Progress Note: complex benchmark blocked by 530 callback while branches are running
 
