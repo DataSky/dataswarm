@@ -33,6 +33,20 @@ SANDBOX_RUNTIME_VERSION_V2 = "dataswarm.sandbox-runtime.v2"
 SANDBOX_RUNTIME_VERSION_V3 = "dataswarm.sandbox-runtime.v3"
 PROTOCOL_VERSION = PROTOCOL_VERSION_V1
 SANDBOX_RUNTIME_VERSION = SANDBOX_RUNTIME_VERSION_V1
+SANDBOX_ACTION_SCHEMA_VERSION_V4_1 = "dataswarm.sandbox-action-schema.v4.1"
+CANONICAL_V4_1_ACTION_TYPES = ["thought", "web.search", "file.read", "trace.query", "artifact.create", "run_python", "final"]
+COMPATIBILITY_ACTION_TYPES = [
+    "think",
+    "use_skill",
+    "read_context",
+    "call_tool",
+    "create_artifact",
+    "reflect",
+    "revise_query",
+    "verify_evidence",
+    "request_more_context",
+    "final_answer",
+]
 
 
 def set_protocol(protocol_version: str) -> None:
@@ -741,8 +755,9 @@ def build_action_system_prompt(job: Dict[str, Any]) -> str:
         [
             "You are a DataSwarm E2B Branch Agent running inside an isolated sandbox.",
             "Choose exactly one next action as a JSON object. Do not write prose outside JSON.",
-            "Valid action types: thought, web.search, file.read, trace.query, artifact.create, run_python, final.",
-            "Compatibility aliases are accepted: use_skill, read_context, call_tool, reflect, revise_query, verify_evidence, request_more_context, final_answer.",
+            f"Action schema version: {SANDBOX_ACTION_SCHEMA_VERSION_V4_1}.",
+            f"Canonical action types: {', '.join(CANONICAL_V4_1_ACTION_TYPES)}.",
+            f"Compatibility aliases are accepted for legacy branch jobs: {', '.join(COMPATIBILITY_ACTION_TYPES)}.",
             "Use call_tool only for tools listed in the tool catalog. External facts must come from tool observations.",
             "Use run_python for local computation, plotting, data transforms, or image generation.",
             "If you emit legacy action names, keep them equivalent to canonical types above.",
@@ -871,7 +886,8 @@ def repair_action_with_model(job: Dict[str, Any], raw_content: str, error: str, 
             "role": "system",
             "content": (
                 "Repair the assistant output into exactly one valid DataSwarm SandboxAgentAction JSON object. "
-                "Return JSON only. Valid action types are thought, web.search, file.read, trace.query, artifact.create, run_python, and final. "
+                f"Return JSON only. Action schema version: {SANDBOX_ACTION_SCHEMA_VERSION_V4_1}. "
+                f"Canonical action types are {', '.join(CANONICAL_V4_1_ACTION_TYPES)}. "
                 "Compatibility aliases are accepted for repair completion."
             ),
         },
@@ -1781,6 +1797,20 @@ def run_v3(job: Dict[str, Any]) -> Dict[str, Any]:
             "allowedTools": allowed_tool_names(job),
             "skillManifestCount": len(skill_manifests(job)),
             "actionSelection": "model_driven_with_explicit_fallback",
+            "actionSchemaVersion": SANDBOX_ACTION_SCHEMA_VERSION_V4_1,
+            "canonicalActionTypes": CANONICAL_V4_1_ACTION_TYPES,
+            "compatibilityActionTypes": COMPATIBILITY_ACTION_TYPES,
+            "repairPolicy": {
+                "maxRepairAttempts": 2,
+                "repairableFailures": ["parse_error", "validation_error"],
+                "terminalUnrepairedStatus": "degraded_or_failed_verification",
+            },
+            "budgetPolicy": {
+                "maxSteps": max_steps,
+                "maxToolCalls": max_tool_calls,
+                "maxRuntimeMs": max_runtime_ms,
+                "maxOutputTokens": max_output_tokens,
+            },
         },
     )
 

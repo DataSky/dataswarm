@@ -148,6 +148,7 @@ try {
   const lines = parseJsonLines(run.stdout);
   const events = lines.filter((line) => typeof line.type === "string" && line.type.startsWith("sandbox.agent."));
   const result = lines.at(-1);
+  const loopStarted = events.find((event) => event.type === "sandbox.agent.loop.started");
 
   expect(
     "mock model server received one request per action step",
@@ -163,6 +164,16 @@ try {
   expect(
     "sandbox emitted next_action model call starts",
     events.filter((event) => event.type === "sandbox.agent.model_call_started" && event.payload?.purpose === "next_action").length >= 6,
+  );
+  expect(
+    "sandbox loop declares V4.1 action schema and repair budget policy",
+    loopStarted?.payload?.actionSchemaVersion === "dataswarm.sandbox-action-schema.v4.1" &&
+      Array.isArray(loopStarted?.payload?.canonicalActionTypes) &&
+      loopStarted.payload.canonicalActionTypes.includes("web.search") &&
+      loopStarted.payload.canonicalActionTypes.includes("artifact.create") &&
+      loopStarted.payload.repairPolicy?.maxRepairAttempts === 2 &&
+      loopStarted.payload.budgetPolicy?.maxSteps === 6,
+    JSON.stringify(loopStarted?.payload),
   );
   expect(
     "sandbox emitted next_action model call completions",

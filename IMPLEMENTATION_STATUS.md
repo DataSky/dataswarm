@@ -1,3 +1,14 @@
+## 2026-06-17 Progress Note: sandbox action schema policy metadata
+
+- Added explicit V4.1 action schema metadata to `sandbox.agent.loop.started` for V3 sandbox agents:
+  - `actionSchemaVersion=dataswarm.sandbox-action-schema.v4.1`
+  - canonical action types (`thought`, `web.search`, `file.read`, `trace.query`, `artifact.create`, `run_python`, `final`)
+  - compatibility aliases for legacy branch jobs
+  - repair policy (`maxRepairAttempts=2`, parse/validation repairable failures, degraded/failed verification terminal policy)
+  - budget policy (`maxSteps`, `maxToolCalls`, `maxRuntimeMs`, `maxOutputTokens`)
+- Reused the same schema constants in the action system prompt and repair prompt so prompt/schema/diagnostics do not drift.
+- Updated `scripts/sandbox-agent-v3-real-action-smoke.mjs` to assert the schema and policy metadata are emitted by the sandbox loop.
+
 ## 2026-06-17 Progress Note: sandbox parse repair events for V3 ReAct actions
 
 - Hardened `sandbox/agent/dataswarm_sandbox_agent.py` so V3 model action parse failures now emit the same auditable repair lifecycle as validation failures:
