@@ -1,3 +1,11 @@
+## 2026-06-17 Progress Note: canonical complex E2B benchmark gates
+
+- Hardened `scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs` so complex live E2B benchmark validation now rejects legacy compatibility action names (`reflect`, `revise_query`, `verify_evidence`, `read_context`, `call_tool`, `create_artifact`) and requires canonical V4.1 action types only.
+- Tightened real-model coverage from aggregate action count to per-branch coverage: complex mode now requires every branch to record at least 3 `real_model` proposed actions bridged back to parent `run_events`.
+- Updated the complex benchmark prompt to request only canonical actions (`thought`, `web.search`, `file.read`, `trace.query`, `artifact.create`, `run_python`, `final`) and to require all branches to call `web.search` through the parent/capability path.
+- Strengthened complex artifact acceptance: live complex benchmark must recover an image artifact plus substantive Markdown and HTML artifacts with deliverable quality metadata, not merely runtime summaries or arbitrary artifact counts.
+- Added a parent-proxy capability completion gate requiring `capability.invoke.completed` evidence for required tools in live complex mode, including `web.search`, `artifact.create`, and `run_python`.
+
 ## 2026-06-17 Progress Note: hard artifact substance gates for text deliverables
 
 - Tightened `artifact_substance_coverage`, `markdown_summary_artifact_coverage`, and `html_report_artifact_coverage` in `apps/web/src/server/runtime/swarm-verifier.ts`.

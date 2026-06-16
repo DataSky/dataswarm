@@ -28,6 +28,19 @@ const sandboxMaxToolCalls = complexBenchmarkMode ? "6" : "4";
 const forceMockTools = (process.env.DATASWARM_E2B_ORCHESTRATOR_V3_MOCK_TOOLS ?? "0") === "1";
 const forceMockModel = (process.env.DATASWARM_E2B_ORCHESTRATOR_V3_MOCK_MODEL ?? "0") === "1";
 const tunnelReachabilityTimeoutMs = Number(process.env.DATASWARM_E2B_ORCHESTRATOR_V3_TUNNEL_REACHABILITY_MS ?? 18_000);
+const canonicalSandboxActionTypes = new Set(["thought", "web.search", "file.read", "trace.query", "artifact.create", "run_python", "final"]);
+const legacySandboxActionTypes = new Set([
+  "think",
+  "use_skill",
+  "read_context",
+  "call_tool",
+  "create_artifact",
+  "reflect",
+  "revise_query",
+  "verify_evidence",
+  "request_more_context",
+  "final_answer",
+]);
 let publicBaseUrl = process.env.DATASWARM_PUBLIC_BASE_URL || "";
 let parentProxyUrl = process.env.DATASWARM_SANDBOX_TOOL_PROXY_URL || publicBaseUrl || "";
 let parentCapabilityInvokeUrl = process.env.DATASWARM_SANDBOX_CAPABILITY_INVOKE_URL || "";
@@ -186,6 +199,7 @@ try {
     );
 
     const branchStartedEvents = eventPayloads(db, runId, "swarm.branch.started");
+    const branchIds = uniqueStrings(branchStartedEvents.map((payload) => extractBranchId(payload)));
     expect(
       `branch started events expose V3 protocol and ${toolProxyMode} proxy mode`,
       branchStartedEvents.length >= 3 &&
@@ -234,21 +248,38 @@ try {
       .all(runId)
       .map((row) => unwrapEventPayload(row.payload_json));
     const sandboxAgentEventTypes = sandboxAgentEvents.map((payload) => payload.agent_event_type ?? payload.type);
-    const sandboxActionTypes = sandboxAgentEvents
-      .filter((payload) => (payload.agent_event_type ?? payload.type) === "sandbox.agent.action.proposed")
-      .map((payload) => payload.event_payload?.action?.type)
-      .filter(Boolean);
-    const realModelActionEvents = sandboxAgentEvents.filter(
-      (payload) => (payload.agent_event_type ?? payload.type) === "sandbox.agent.action.proposed" && payload.event_payload?.actionSource === "real_model",
+    const proposedSandboxActionEvents = sandboxAgentEvents.filter(
+      (payload) => (payload.agent_event_type ?? payload.type) === "sandbox.agent.action.proposed",
     );
+    const sandboxActionTypes = proposedSandboxActionEvents.map((payload) => extractSandboxActionType(payload)).filter(Boolean);
+    const realModelActionEvents = proposedSandboxActionEvents.filter((payload) => extractSandboxActionSource(payload) === "real_model");
+    const realModelActionCountsByBranch = countEventsByBranch(realModelActionEvents);
+    const minimumRealModelActionsPerBranch = complexBenchmarkMode ? 3 : 1;
     expect(
       "real e2b V3 sandbox agent events are bridged to parent run",
       sandboxAgentEventTypes.includes("sandbox.agent.loop.started") &&
         sandboxAgentEventTypes.includes("sandbox.agent.model_call_completed") &&
         sandboxAgentEventTypes.includes("sandbox.agent.action.proposed") &&
         sandboxAgentEventTypes.includes("sandbox.agent.observation.created") &&
-        realModelActionEvents.length >= 6,
-      JSON.stringify({ total: sandboxAgentEvents.length, eventTypes: [...new Set(sandboxAgentEventTypes)], realModelActionEvents: realModelActionEvents.length }),
+        realModelActionEvents.length >= branchIds.length * minimumRealModelActionsPerBranch,
+      JSON.stringify({
+        total: sandboxAgentEvents.length,
+        eventTypes: [...new Set(sandboxAgentEventTypes)],
+        realModelActionEvents: realModelActionEvents.length,
+        realModelActionCountsByBranch,
+      }),
+    );
+    expect(
+      "each real e2b branch records enough real_model action decisions",
+      branchIds.length >= 3 && branchIds.every((branchId) => Number(realModelActionCountsByBranch[branchId] ?? 0) >= minimumRealModelActionsPerBranch),
+      JSON.stringify({ branchIds, minimumRealModelActionsPerBranch, realModelActionCountsByBranch }),
+    );
+    expect(
+      "sandbox proposed actions use canonical V4.1 schema without legacy action types",
+      sandboxActionTypes.length >= branchIds.length * minimumRealModelActionsPerBranch &&
+        sandboxActionTypes.every((type) => canonicalSandboxActionTypes.has(type)) &&
+        sandboxActionTypes.every((type) => !legacySandboxActionTypes.has(type)),
+      JSON.stringify({ actionTypes: sandboxActionTypes, canonicalActionTypes: [...canonicalSandboxActionTypes] }),
     );
 
     const branchObservations = db
@@ -325,40 +356,44 @@ try {
         )
         .all(runId);
       expect(
-        "complex live e2b V3 benchmark records reflection and evidence verification",
-        qualitySignals.some((quality) => Number(quality.reflectionCount ?? 0) >= 1) &&
-          qualitySignals.some((quality) => Number(quality.evidenceVerificationCount ?? 0) >= 1) &&
-          sandboxActionTypes.includes("reflect") &&
-          sandboxActionTypes.includes("verify_evidence"),
+        "complex live e2b V3 benchmark exercises canonical research and deliverable actions",
+        sandboxActionTypes.includes("thought") &&
+          sandboxActionTypes.filter((type) => type === "web.search").length >= 4 &&
+          sandboxActionTypes.includes("run_python") &&
+          sandboxActionTypes.includes("artifact.create") &&
+          sandboxActionTypes.includes("final"),
         JSON.stringify({
           qualitySignals: qualitySignals.map(summarizeQualitySignals),
           actionTypes: sandboxActionTypes,
         }),
       );
       expect(
-        "complex live e2b V3 benchmark attempts query revision or multiple parent-proxy searches",
-        sandboxActionTypes.includes("revise_query") || qualitySignals.some((quality) => Number(quality.toolCallCount ?? 0) >= 2),
+        "complex live e2b V3 benchmark avoids deprecated compatibility action names",
+        sandboxActionTypes.every((type) => !legacySandboxActionTypes.has(type)),
         JSON.stringify({
-          qualitySignals: qualitySignals.map(summarizeQualitySignals),
           actionTypes: sandboxActionTypes,
+          legacyActionTypes: [...legacySandboxActionTypes],
         }),
       );
       expect(
-        "complex live e2b V3 benchmark recovers durable report artifacts",
-        artifactRows.some((artifact) => artifact.type === "markdown") &&
-          (artifactRows.some((artifact) => artifact.type === "html") || artifactRows.length >= 3),
+        "complex live e2b V3 benchmark recovers image plus substantive markdown and html artifacts",
+        artifactRows.some((artifact) => artifact.type === "image" || /^image\//i.test(String(artifact.mime_type ?? ""))) &&
+          artifactRows.some((artifact) => artifact.type === "markdown" && artifactHasSubstance(artifact)) &&
+          artifactRows.some((artifact) => artifact.type === "html" && artifactHasSubstance(artifact)),
         JSON.stringify(
           artifactRows.map((artifact) => ({
             id: artifact.id,
             title: artifact.title,
             type: artifact.type,
             mimeType: artifact.mime_type,
+            quality: summarizeArtifactQuality(artifact),
           })),
         ),
       );
     }
 
     if (parentProxyMode) {
+      const capabilityCompletedEvents = eventPayloads(db, runId, "capability.invoke.completed");
       const proxyCompletedEvents = eventPayloads(db, runId, "sandbox.tool_proxy.call.completed");
       const proxyObservations = db
         .prepare(
@@ -388,6 +423,24 @@ try {
             metadata: summarizeProxyObservationMetadata(parseJson(row.metadata_json, {})),
           })),
           completedToolCallCount: completedToolCalls?.count,
+        }),
+      );
+      expect(
+        "live e2b V3 parent proxy emits capability invoke completions for required tools",
+        capabilityCompletedEvents.length >= (complexBenchmarkMode ? 5 : 1) &&
+          capabilityCompletedEvents.some((payload) => payload.capability_name === "web.search" || payload.tool_name === "web.search") &&
+          (!complexBenchmarkMode ||
+            (capabilityCompletedEvents.some((payload) => payload.capability_name === "artifact.create" || payload.tool_name === "artifact.create") &&
+              capabilityCompletedEvents.some((payload) => payload.capability_name === "run_python" || payload.tool_name === "run_python"))),
+        JSON.stringify({
+          capabilityCompletedEvents: capabilityCompletedEvents.map((payload) => ({
+            branchId: extractBranchId(payload),
+            capabilityName: payload.capability_name ?? payload.capabilityName,
+            toolName: payload.tool_name ?? payload.toolName,
+            observationId: payload.observation_id ?? payload.observationId,
+            toolCallId: payload.tool_call_id ?? payload.toolCallId,
+            evidenceLevel: payload.evidence_level ?? payload.evidenceLevel,
+          })),
         }),
       );
     }
@@ -426,12 +479,13 @@ finish();
 function buildSmokePrompt() {
   if (complexBenchmarkMode) {
     return [
-      "请用 swarm 并行 3 个真实 E2B 沙箱执行 DataSwarm Branch Agent ReAct V3 complex benchmark。",
-      "所有分支都必须由沙箱内真实模型逐步选择 action，不能使用 deterministic fallback。",
-      "三个分支都必须至少通过父进程工具代理调用一次 web.search；分支 A 需要在 reflect/revise_query 后再执行第二次 web.search。",
-      "分支 A：先 read_context，再通过父进程工具代理 web.search 查询 DataSwarm Branch Agent ReAct V3 parent proxy evidence；如果第一轮证据不够，需要 reflect 后 revise_query，再执行第二次 web.search，并用 verify_evidence 核验来源。",
-      "分支 B：执行 run_python 绘制 f=sin(x) 图片，随后 reflect 并 verify_evidence，确保图片 artifact 可以被父进程回收。",
-      "分支 C：基于观察结果生成 Markdown 与 HTML 报告 artifact，必须通过 create_artifact 产出，并用 verify_evidence 说明 artifact 来源。",
+      "请用 swarm 并行 3 个真实 E2B 沙箱执行 DataSwarm Branch Agent ReAct V4.1 complex benchmark。",
+      "所有分支都必须由沙箱内真实模型逐步选择 canonical action，不能使用 deterministic fallback，也不能输出 reflect/revise_query/verify_evidence/read_context/call_tool/create_artifact 等旧动作名。",
+      "允许的 action type 只有 thought、web.search、file.read、trace.query、artifact.create、run_python、final。",
+      "三个分支都必须至少通过父进程工具代理调用一次 web.search；分支 A 需要先 thought 分析证据缺口，再用第二次 web.search 执行修订查询。",
+      "分支 A：先用 file.read 读取可用上下文，再通过 web.search 查询 DataSwarm Branch Agent ReAct V4.1 parent proxy evidence；如果第一轮证据不够，用 thought 说明缺口，再执行第二次 web.search，并在 final 中列出 Observation ID。",
+      "分支 B：先通过 web.search 查询 last-mile scheduling visualization evidence，再执行 run_python 绘制 f=sin(x) 或调度负载曲线图片，确保图片 artifact 可以被父进程回收，并在 final 中引用 Observation/Artifact ID。",
+      "分支 C：先通过 web.search 查询智能调度平台落地证据，然后用 artifact.create 生成 Markdown 与 HTML 报告 artifact；报告必须包含执行摘要、证据表、风险约束、落地路线，并在 final 中引用 Observation/Artifact ID。",
       "最后 swarm.reduce / swarm.verify 需要等待全部分支 settled 后再合并，最终回答要引用 observation 与 artifact。",
     ].join("\n");
   }
@@ -874,6 +928,89 @@ function unwrapEventPayload(value) {
 
 function uniqueStrings(values) {
   return [...new Set(values.filter((value) => typeof value === "string" && value.length > 0))];
+}
+
+function extractBranchId(payload) {
+  return (
+    payload?.branch_id ??
+    payload?.branchId ??
+    payload?.event_payload?.branch_id ??
+    payload?.event_payload?.branchId ??
+    payload?.event_payload?.metadata?.branch_id ??
+    payload?.event_payload?.metadata?.branchId ??
+    payload?.metadata?.branch_id ??
+    payload?.metadata?.branchId ??
+    ""
+  );
+}
+
+function extractSandboxActionType(payload) {
+  return (
+    payload?.event_payload?.action?.type ??
+    payload?.event_payload?.finalAction?.type ??
+    payload?.event_payload?.parsedAction?.type ??
+    payload?.action?.type ??
+    ""
+  );
+}
+
+function extractSandboxActionSource(payload) {
+  return (
+    payload?.event_payload?.actionSource ??
+    payload?.event_payload?.action_source ??
+    payload?.actionSource ??
+    payload?.action_source ??
+    ""
+  );
+}
+
+function countEventsByBranch(events) {
+  return events.reduce((counts, event) => {
+    const branchId = extractBranchId(event);
+    if (branchId) {
+      counts[branchId] = Number(counts[branchId] ?? 0) + 1;
+    }
+    return counts;
+  }, {});
+}
+
+function artifactQuality(artifact) {
+  const metadata = parseJson(artifact.metadata_json, {});
+  return metadata.qualitySignals ?? metadata.quality_signals ?? {};
+}
+
+function artifactHasSubstance(artifact) {
+  const quality = artifactQuality(artifact);
+  const status = String(quality.substanceStatus ?? quality.substance_status ?? "").toLowerCase();
+  const deliverableEligible = quality.deliverableEligible ?? quality.deliverable_eligible;
+  const sectionCount = Number(quality.sectionCount ?? quality.section_count ?? 0);
+  const characterCount = Number(quality.characterCount ?? quality.character_count ?? 0);
+  const evidenceCitationCount = Number(quality.evidenceCitationCount ?? quality.evidence_citation_count ?? 0);
+  const sourceObservationCount = Number(quality.sourceObservationCount ?? quality.source_observation_count ?? 0);
+  const minimumSectionThreshold = Number(quality.minimumSectionThreshold ?? quality.minimum_section_threshold ?? 3) || 3;
+  const minimumCharacterThreshold =
+    Number(quality.minimumCharacterThreshold ?? quality.minimum_character_threshold ?? (artifact.type === "html" ? 900 : 700)) ||
+    (artifact.type === "html" ? 900 : 700);
+
+  return (
+    status === "substantive" &&
+    deliverableEligible === true &&
+    sectionCount >= minimumSectionThreshold &&
+    characterCount >= minimumCharacterThreshold &&
+    (sourceObservationCount === 0 || evidenceCitationCount > 0)
+  );
+}
+
+function summarizeArtifactQuality(artifact) {
+  const quality = artifactQuality(artifact);
+  return {
+    substanceStatus: quality.substanceStatus ?? quality.substance_status,
+    deliverableEligible: quality.deliverableEligible ?? quality.deliverable_eligible,
+    sectionCount: quality.sectionCount ?? quality.section_count,
+    characterCount: quality.characterCount ?? quality.character_count,
+    evidenceCitationCount: quality.evidenceCitationCount ?? quality.evidence_citation_count,
+    sourceObservationCount: quality.sourceObservationCount ?? quality.source_observation_count,
+  };
 }
 
 function summarizeBranchObservations(rows, metadata) {
