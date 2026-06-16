@@ -183,9 +183,11 @@ type BranchArtifactSummary = {
   artifactKind?: string | null;
   qualitySignals?: Record<string, unknown>;
   sourceObservationIds?: string[];
+  sourceArtifactIds?: string[];
 };
 
 function branchArtifactFromArtifactRecord(artifact: ArtifactRecord, branchId: string): BranchArtifactSummary {
+  const metadataStringArray = Array.isArray(artifact.metadata?.sourceArtifactIds) ? artifact.metadata.sourceArtifactIds : [];
   return {
     id: artifact.id,
     type: artifact.type,
@@ -198,6 +200,7 @@ function branchArtifactFromArtifactRecord(artifact: ArtifactRecord, branchId: st
     artifactKind: artifact.artifactKind,
     qualitySignals: artifact.qualitySignals,
     sourceObservationIds: uniqueStrings(artifact.sourceObservationIds),
+    sourceArtifactIds: uniqueStrings(metadataStringArray),
   };
 }
 
@@ -2340,6 +2343,7 @@ type PublicBranchArtifactInput =
       artifactKind?: string | null;
       qualitySignals?: Record<string, unknown>;
       sourceObservationIds?: string[];
+      sourceArtifactIds?: string[];
     };
 
 function publicBranchArtifact(artifact: PublicBranchArtifactInput) {
@@ -2354,6 +2358,7 @@ function publicBranchArtifact(artifact: PublicBranchArtifactInput) {
     artifactKind: artifact.artifactKind,
     qualitySignals: artifact.qualitySignals,
     sourceObservationIds: artifact.sourceObservationIds,
+    sourceArtifactIds: artifact.sourceArtifactIds,
   };
 }
 

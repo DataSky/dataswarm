@@ -53,6 +53,13 @@ V4.1 turns the V4 E2B ReAct swarm from a runnable branch system into an evidence
 - Canonical/compatibility examples were expanded in `build_action_system_prompt` to lower false-negative repair retries and increase branch-level evidence quality opportunities.
 - Next required validation step: real-model local parser/repair smoke should show increased pass-rate for canonical action emissions and zero unrepaired invalid action failures under normal prompts.
 
+## 2026-06-16 Progress Note: artifact evidence source linkage enhancement
+
+- Extended swarm branch artifact summaries to carry `sourceArtifactIds` from artifact metadata where available, alongside existing `sourceObservationIds`.
+- This keeps verifier and diagnostics inputs symmetric for final-report/source-coverage checks that require artifact lineage to include both observation and artifact provenance.
+- `publicBranchArtifact` now emits both source ID vectors, allowing diagnostics consumers to inspect branch artifact evidentiary chain without rehydrating full metadata.
+- Required next validation step: real or local swarm smoke should verify `final_html_report_source_coverage` still passes when branch artifacts include source artifact linkage, and `run_python` image artifacts remain de-duplicated with correct source metadata.
+
 ## 2026-06-15 Implementation Notes
 
 - `web.search` must fail on missing real provider credentials in real mode instead of silently returning mock sources; provider=mock is allowed only under explicit mock opt-in and must remain clearly degraded/mock evidence.
