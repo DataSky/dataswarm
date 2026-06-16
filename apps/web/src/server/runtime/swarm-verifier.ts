@@ -1044,12 +1044,32 @@ function buildInvalidActionRepairPolicyCheck(input: SwarmVerificationInput): Swa
 function buildTraceDiagnosticsReplayabilityCheck(input: SwarmVerificationInput): SwarmVerificationCheck {
   const eventCounts = input.eventEvidence?.eventTypeCounts ?? {};
   const branchCompletedEvents = Number(eventCounts["swarm.branch.completed"] ?? 0);
+  const branchContractMaterializedEvents = Number(eventCounts["swarm.branch.contract.materialized"] ?? 0);
+  const branchFinalMaterializedEvents = Number(eventCounts["swarm.branch.final.materialized"] ?? 0);
   const reduceEvents = Number(eventCounts["swarm.reduce"] ?? 0);
   const finalArtifactEvents = Number(eventCounts["swarm.final_artifact.created"] ?? 0);
+  const sandboxActionEvents = Object.entries(eventCounts)
+    .filter(([type]) => type.startsWith("sandbox.agent.action"))
+    .reduce((total, [, count]) => total + Number(count ?? 0), 0);
+  const sandboxObservationEvents =
+    Number(eventCounts["sandbox.agent.observation.created"] ?? 0) +
+    Number(eventCounts["sandbox.agent.observation_created"] ?? 0);
+  const sandboxModelEvents =
+    Number(eventCounts["sandbox.agent.model_call_completed"] ?? 0) +
+    Number(eventCounts["sandbox.agent.model_call_failed"] ?? 0);
   const capabilityEvents =
     Number(input.eventEvidence?.capabilityInvokeCompletedCount ?? 0) +
     Number(input.eventEvidence?.sandboxToolProxyCompletedCount ?? 0);
+  const hasSandboxRuntimeSignals = (input.branchQualitySignals ?? []).some((quality) =>
+    asText(quality.runtimeVersion).startsWith("dataswarm.sandbox-runtime"),
+  );
   const missing: string[] = [];
+  if (branchContractMaterializedEvents < input.plan.branches.length) {
+    missing.push(`swarm.branch.contract.materialized ${branchContractMaterializedEvents}/${input.plan.branches.length}`);
+  }
+  if (branchFinalMaterializedEvents < input.completedBranches) {
+    missing.push(`swarm.branch.final.materialized ${branchFinalMaterializedEvents}/${input.completedBranches}`);
+  }
   if (branchCompletedEvents < input.completedBranches) {
     missing.push(`swarm.branch.completed ${branchCompletedEvents}/${input.completedBranches}`);
   }
@@ -1065,6 +1085,15 @@ function buildTraceDiagnosticsReplayabilityCheck(input: SwarmVerificationInput):
   if (input.artifactIds.length < 1) {
     missing.push("artifactIds missing");
   }
+  if (hasSandboxRuntimeSignals && sandboxActionEvents < input.completedBranches) {
+    missing.push(`sandbox.agent.action events ${sandboxActionEvents}/${input.completedBranches}`);
+  }
+  if (hasSandboxRuntimeSignals && sandboxObservationEvents < input.completedBranches) {
+    missing.push(`sandbox.agent.observation events ${sandboxObservationEvents}/${input.completedBranches}`);
+  }
+  if (hasSandboxRuntimeSignals && sandboxModelEvents < input.completedBranches) {
+    missing.push(`sandbox.agent.model_call events ${sandboxModelEvents}/${input.completedBranches}`);
+  }
   if ((input.branchContracts ?? []).some((contract) => contract.requiredTools.length > 0) && capabilityEvents < 1) {
     missing.push("capability/proxy completion events missing");
   }
@@ -1073,7 +1102,7 @@ function buildTraceDiagnosticsReplayabilityCheck(input: SwarmVerificationInput):
     status: missing.length === 0 ? "passed" : "failed",
     detail:
       missing.length === 0
-        ? `Trace replay evidence is sufficient before verify publication: branchCompletedEvents=${branchCompletedEvents}, reduceEvents=${reduceEvents}, finalArtifactEvents=${finalArtifactEvents}, capability/proxy completions=${capabilityEvents}.`
+        ? `Trace replay evidence is sufficient before verify publication: branchContractMaterializedEvents=${branchContractMaterializedEvents}, branchFinalMaterializedEvents=${branchFinalMaterializedEvents}, branchCompletedEvents=${branchCompletedEvents}, sandboxActionEvents=${sandboxActionEvents}, sandboxObservationEvents=${sandboxObservationEvents}, sandboxModelEvents=${sandboxModelEvents}, reduceEvents=${reduceEvents}, finalArtifactEvents=${finalArtifactEvents}, capability/proxy completions=${capabilityEvents}.`
         : `Trace replay evidence is incomplete: ${missing.join(", ")}.`,
   };
 }

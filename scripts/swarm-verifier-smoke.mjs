@@ -72,6 +72,16 @@ expect(
 );
 
 expect(
+  "verifier hardens trace diagnostics replayability",
+  /trace_diagnostics_replayability/.test(verifier) &&
+    /swarm\.branch\.contract\.materialized/.test(verifier) &&
+    /swarm\.branch\.final\.materialized/.test(verifier) &&
+    /sandbox\.agent\.observation\.created/.test(verifier) &&
+    /sandbox\.agent\.model_call/.test(verifier),
+  "Verifier should require replayable contract/final/sandbox-agent evidence before accepting a V4.1 swarm result.",
+);
+
+expect(
   "verifier checks recovered artifact type coverage",
   /recovered_artifact_type_coverage/.test(verifier) &&
     /Requested deliverables are missing recovered artifact type/.test(verifier) &&

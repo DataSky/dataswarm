@@ -1,3 +1,10 @@
+## 2026-06-17 Progress Note: stricter trace diagnostics replayability gate
+
+- Tightened `trace_diagnostics_replayability` in `apps/web/src/server/runtime/swarm-verifier.ts` so V4.1 verification now requires replayable branch contract and branch final materialization events in addition to branch completion, reducer, final artifact, and capability/proxy evidence.
+- For sandbox-runtime branches, the gate now also checks persisted `sandbox.agent.action*`, `sandbox.agent.observation.created` / legacy `sandbox.agent.observation_created`, and `sandbox.agent.model_call*` events before a swarm result can pass trace replayability.
+- Updated `scripts/swarm-verifier-smoke.mjs` to pin this behavior so later refactors cannot quietly weaken conversationId diagnostics.
+- This directly supports the V4.1 requirement that diagnostics can prove real E2B execution, real model action, real tool proxy, real artifact recovery, and degraded/fallback status from persisted trace evidence rather than branch self-report.
+
 ## 2026-06-16 Progress Note: harden real-startup mock guards
 
 - `scripts/dev-real.mjs` 与 `scripts/dev-real-cloudflare-tunnel.mjs` 的 mock 污染检测已增强：`DATASWARM_ALLOW_EXPLICIT_MOCK / DATASWARM_MOCK_MODEL / DATASWARM_MOCK_TOOLS` 现在识别 `1/true/yes/on` 等常见真值，并继续阻断启动，避免环境变量残留导致默认 real 启动误入 mock 模式。
