@@ -246,6 +246,9 @@ function unwrapEventPayload(value) {
 }
 
 function cleanupSmokeRows() {
+  if (process.env.DATASWARM_SWARM_PARALLEL_E2E_KEEP_ROWS === "1") {
+    return;
+  }
   if (!existsSync(dbPath)) {
     return;
   }
