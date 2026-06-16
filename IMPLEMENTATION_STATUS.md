@@ -44,6 +44,14 @@
 
 ## 2026-06-16 V4.1 Recovery Checkpoint
 
+## 2026-06-16 Progress Note: branch artifact lineage linkage extension
+
+- Extended branch artifact lineage propagation in `apps/web/src/server/runtime/swarm.ts`:
+  - Added `sourceArtifactIds` to branch artifact summary/public inputs.
+  - `branchArtifactFromArtifactRecord` now hydrates `sourceArtifactIds` from artifact metadata.
+  - `publicBranchArtifact` now carries both `sourceObservationIds` and `sourceArtifactIds` for diagnostics and verifier inputs.
+- This removes remaining lineage gaps when required branch deliverables are sourced from regenerated artifact metadata or parent-produced artifacts.
+
 - Closed the remaining `apps/web` runtime compile blockers introduced during V4 hardening.
   - Repaired `publicBranchArtifact` typing for parent capability artifacts with nullable `mimeType` / `storageUri`.
   - Added `BranchFinal.qualitySignals` in the shared branch contract type.
