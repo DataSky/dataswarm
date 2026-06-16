@@ -616,29 +616,34 @@ async function verifyCallbackReachability(baseUrl) {
 
   for (const check of checks) {
     const fullUrl = `${healthBaseUrl.replace(/\/$/, "")}${check.path}`;
-    const result = await probeUrl(fullUrl, { timeoutMs: tunnelReachabilityTimeoutMs / checks.length });
-    const next = { path: check.path, status: result.status, ok: result.ok };
-    if (!result.ok) {
-      details.push({ ...next, reason: result.body?.slice(0, 200) ?? result.statusText ?? "unreachable" });
+    const parsedCheckResult = await waitForValidReachabilityResult(fullUrl, check, 4, checks.length);
+    const next = {
+      path: check.path,
+      status: parsedCheckResult.status,
+      ok: parsedCheckResult.ok,
+      attempts: parsedCheckResult.attempts,
+      parsed: parsedCheckResult.parsed,
+    };
+
+    if (!parsedCheckResult.ok) {
+      details.push({
+        ...next,
+        reason: parsedCheckResult.reason,
+      });
       return { ok: false, baseUrl, details };
     }
 
     if (check.requireStatusBody) {
-      try {
-        const payload = JSON.parse(result.body || "{}");
-        const passes = payload?.status === check.requiredStatus;
-        details.push({ ...next, bodyStatus: payload?.status ?? null, parsed: true });
-        if (!passes) {
-          return {
-            ok: false,
-            baseUrl,
-            details,
-            reason: `health status mismatch for ${check.path}: ${payload?.status ?? "unknown"}`,
-          };
-        }
-      } catch {
-        details.push({ ...next, parsed: false, reason: "health body invalid JSON" });
-        return { ok: false, baseUrl, details };
+      const payload = parsedCheckResult.payload;
+      const passes = payload?.status === check.requiredStatus;
+      details.push({ ...next, bodyStatus: payload?.status ?? null, parsed: true });
+      if (!passes) {
+        return {
+          ok: false,
+          baseUrl,
+          details,
+          reason: `health status mismatch for ${check.path}: ${payload?.status ?? "unknown"}`,
+        };
       }
     } else {
       details.push(next);
@@ -646,6 +651,77 @@ async function verifyCallbackReachability(baseUrl) {
   }
 
   return { ok: true, baseUrl, details };
+}
+
+async function waitForValidReachabilityResult(fullUrl, check, attempts = 4, checkCount = 2) {
+  const timeoutMs = tunnelReachabilityTimeoutMs / (checkCount * 2 + 2);
+  let lastBody = "";
+
+  for (let index = 1; index <= attempts; index += 1) {
+    const result = await probeUrl(fullUrl, { timeoutMs });
+    if (!result.ok) {
+      return {
+        ok: false,
+        status: result.status,
+        reason: result.body?.slice(0, 220) ?? result.statusText ?? "unreachable",
+        parsed: false,
+        attempts: index,
+      };
+    }
+
+    if (!check.requireStatusBody) {
+      return { ok: true, status: result.status, parsed: true, attempts: index };
+    }
+
+    const payload = tryParseJson(result.body);
+    if (payload) {
+      return {
+        ok: true,
+        status: result.status,
+        parsed: true,
+        attempts: index,
+        payload,
+      };
+    }
+
+    lastBody = result.body;
+    if (index < attempts) {
+      await delay(500);
+    }
+  }
+
+  return {
+    ok: false,
+    status: 200,
+    parsed: false,
+    reason: `health body invalid JSON after ${attempts} attempts: ${(lastBody ?? "").slice(0, 220)}`,
+    attempts,
+  };
+}
+
+function tryParseJson(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const fallbackMatch = trimmed.match(/\{[\s\S]*\}$/);
+    if (!fallbackMatch) {
+      return null;
+    }
+    try {
+      return JSON.parse(fallbackMatch[0]);
+    } catch {
+      return null;
+    }
+  }
 }
 
 function deriveServiceBaseUrl(rawUrl) {
