@@ -1,6 +1,6 @@
 # E2B Branch Agent ReAct V4 Capability Plane
 
-> Date: 2026-06-14
+> Date: 2026-06-16
 > Status: V4 capability-plane checkpoint implemented; preserved live E2B complex benchmark passed
 
 ## Core Decision
@@ -30,6 +30,13 @@ This directly addresses the failure mode where an E2B sandbox tries to call `hos
 - Updated the sandbox agent to prefer `capabilityPlane.invokeUrl` and fall back to the legacy proxy URL.
 - Changed default `apps/web` dev startup so it no longer hardcodes `host.docker.internal`.
 - Added E2B readiness gating for public callback reachability. A real E2B orchestrator run now requires a public proxy/capability URL instead of accepting local-only URLs such as `localhost`, `127.0.0.1`, or `host.docker.internal`.
+
+## 2026-06-16 Checkpoint: action schema alignment for V4 ReAct branch agents
+
+- Updated sandbox action system prompt to align with V4.1 canonical action schema (`thought`, `web.search`, `file.read`, `trace.query`, `artifact.create`, `run_python`, `final`) and clarified that legacy aliases are compatibility only.
+- Added explicit parser acceptance guidance for legacy-to-canonical action equivalences (e.g., `thought` -> `think`, `web.search` -> `call_tool` with `toolName=web.search`) to reduce invalid-action noise and improve repair-to-progress behavior.
+- Improved repair prompt action vocabulary so repaired outputs return canonical action names expected by V4.1 validation.
+- No live validation claim added in this slice; next step is verifying real-model repair/parse behavior under the smoke phase.
 
 ## Runtime Contract
 

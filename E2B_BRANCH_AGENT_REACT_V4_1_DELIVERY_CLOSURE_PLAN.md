@@ -36,6 +36,13 @@ V4.1 turns the V4 E2B ReAct swarm from a runnable branch system into an evidence
 - Do not count runtime summaries as substantive deliverables.
 - Do not accept branch self-report as tool evidence unless parent tool_call, Observation, and events exist.
 
+## 2026-06-16 Progress Note: action-schema guidance and repair alignment
+
+- Updated sandbox guidance to prioritize canonical V4 actions (`thought`, `web.search`, `file.read`, `trace.query`, `artifact.create`, `run_python`, `final`) and mark legacy names as compatibility mode.
+- Repair path now enforces canonical action vocabulary first, reducing invalid-action churn in real-model loops.
+- Canonical/compatibility examples were expanded in `build_action_system_prompt` to lower false-negative repair retries and increase branch-level evidence quality opportunities.
+- Next required validation step: real-model local parser/repair smoke should show increased pass-rate for canonical action emissions and zero unrepaired invalid action failures under normal prompts.
+
 ## 2026-06-15 Implementation Notes
 
 - `web.search` must fail on missing real provider credentials in real mode instead of silently returning mock sources; provider=mock is allowed only under explicit mock opt-in and must remain clearly degraded/mock evidence.
