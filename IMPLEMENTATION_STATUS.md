@@ -12,6 +12,13 @@
   - 对每个端点增加 2 次重试（含重试间隔），并把失败原因汇总为 `endpoint/attempt/status/errorType`，返回给上层用于 diagnostics 与 verifier 复盘。
 - 这次改动是对“real action 可执行但工具调用仍失败”的高价值修补：优先恢复真实 `tool_calls`、`Observation`、`run_events` 写入链路，再进入下一步复杂基准复测。
 
+## 2026-06-16 Progress Note: add final answer evidence coverage gate
+
+- 在 `apps/web/src/server/runtime/swarm-verifier.ts` 增加了 `final_answer_evidence_coverage` 门禁：
+  - 验证每个 `BranchFinal` 是否有 `sections/claims` 或直接 `evidenceObservationIds` / `artifactIds` 的引用，避免最终分支答复没有事实来源但仍通过验证。
+  - 将该门禁加入 `V4_1_SWARM_VERIFY_GATE_IDS` 与 `buildSwarmVerification` 检查序列，确保 `trace_diagnostics` 能看到该硬约束是否缺失。
+- 通过 `npm --prefix apps/web run typecheck` 编译校验，无新增类型问题。
+
 ## 2026-06-16 Progress Note: parent-proxy fallback retry flow corrected
 
 - 修复 `sandbox/agent/dataswarm_sandbox_agent.py` 的 `call_parent_tool` fallback 逻辑：避免在首个端点失败后立即回退到失败结论，确保同一端点重试结束后再尝试兜底端点。

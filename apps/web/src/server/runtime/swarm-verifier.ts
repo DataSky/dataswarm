@@ -28,6 +28,7 @@ export const V4_1_SWARM_VERIFY_GATE_IDS = [
   "run_python_image_artifact_coverage",
   "fallback_action_policy",
   "invalid_action_repair_policy",
+  "final_answer_evidence_coverage",
   "artifact_substance_coverage",
   "markdown_summary_artifact_coverage",
   "artifact_source_observation_coverage",
@@ -746,6 +747,52 @@ function buildFallbackActionPolicyCheck(input: SwarmVerificationInput): SwarmVer
   };
 }
 
+function buildFinalAnswerEvidenceCoverageCheck(input: SwarmVerificationInput): SwarmVerificationCheck {
+  const contracts = input.branchContracts ?? [];
+  if (contracts.length === 0) {
+    return {
+      id: "final_answer_evidence_coverage",
+      status: "failed",
+      detail: "No BranchContract records were available, so final-answer evidence coverage cannot be verified.",
+    };
+  }
+  const missing: string[] = [];
+  for (const contract of contracts) {
+    const final = findBranchFinal(input.branchFinals ?? [], contract.branchId);
+    if (!final) {
+      missing.push(`${contract.branchId}:branchFinal missing`);
+      continue;
+    }
+
+    const sectionEvidence = (final.sections ?? []).some(
+      (section) =>
+        (Array.isArray(section.evidenceObservationIds) && section.evidenceObservationIds.length > 0) ||
+        (Array.isArray(section.evidenceArtifactIds) && section.evidenceArtifactIds.length > 0),
+    );
+    const claimEvidence = (final.claims ?? []).some(
+      (claim) =>
+        (Array.isArray(claim.evidenceObservationIds) && claim.evidenceObservationIds.length > 0) ||
+        (Array.isArray(claim.evidenceArtifactIds) && claim.evidenceArtifactIds.length > 0),
+    );
+    const directEvidence =
+      (Array.isArray(final.evidenceObservationIds) && final.evidenceObservationIds.length > 0) ||
+      (Array.isArray(final.artifactIds) && final.artifactIds.length > 0);
+
+    if (!sectionEvidence && !claimEvidence && !directEvidence) {
+      missing.push(`${contract.branchId}:no final observation/artifact citations`);
+    }
+  }
+
+  return {
+    id: "final_answer_evidence_coverage",
+    status: missing.length === 0 ? "passed" : "failed",
+    detail:
+      missing.length === 0
+        ? `${contracts.length} final BranchFinal entries include evidence-linked final content.`
+        : `Branches with final output missing observation/artifact citations: ${missing.join(", ")}.`,
+  };
+}
+
 function isSubstantiveTextDeliverableArtifact(artifact: {
   type: string;
   title: string;
@@ -822,6 +869,7 @@ export function buildSwarmVerification(input: SwarmVerificationInput): SwarmVeri
   checks.push(buildRunPythonImageArtifactCoverageCheck(input));
   checks.push(buildFallbackActionPolicyCheck(input));
   checks.push(buildInvalidActionRepairPolicyCheck(input));
+  checks.push(buildFinalAnswerEvidenceCoverageCheck(input));
   checks.push(buildArtifactSubstanceCheck(input));
   checks.push(buildMarkdownSummaryArtifactCoverageCheck(input));
   checks.push(buildArtifactSourceObservationCoverageCheck(input));
