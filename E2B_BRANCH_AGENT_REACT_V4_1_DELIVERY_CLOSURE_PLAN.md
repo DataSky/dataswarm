@@ -29,6 +29,16 @@ V4.1 turns the V4 E2B ReAct swarm from a runnable branch system into an evidence
 6. Real E2B parent-proxy smoke through the public Cloudflare tunnel.
 7. Real E2B complex benchmark proving multiple branches, at least three real_model actions per branch, zero normal-path fallback, real parent-proxied web.search evidence, image artifact, Markdown/HTML artifact, final Observation/Artifact citations, and reproducible diagnostics.
 
+## 2026-06-16 Progress Note: enforce real proxy reachability in local real-action smoke
+
+- Added explicit guardrails in `scripts/e2b-sandbox-v3-real-action-smoke.mjs` so the local real-action smoke cannot accidentally report success on `host.docker.internal` / localhost callback paths.
+- Added explicit SKIP behavior for local-only proxy paths, forcing the command to be run with reachable HTTPS callback context (Cloudflare/public tunnel).
+- Relaxed local fallback policy validation:
+  - strict zero-fallback is kept for normal paths,
+  - degraded or failed_verification paths are only accepted when marked degraded in quality signals.
+- Increased smoke tool-budget default to lower deterministic invalid-action fallback churn.
+- This step keeps phase 3 evidence honest and blocks mock contamination in the real-action smoke validation path.
+
 ## Non-Negotiables
 
 - Do not mark mock results as live.

@@ -1,3 +1,17 @@
+## 2026-06-16 Progress Note: e2b-v3-real-action smoke now hard-fails on non-reachable proxy path
+
+- `scripts/e2b-sandbox-v3-real-action-smoke.mjs` now rejects local-only/proxy-only URLs (`localhost`, `127.0.0.1`, `host.docker.internal`, non-HTTPS) and exits as SKIP with an explicit message unless an HTTPS public callback URL is configured.
+- Reworked fallback handling in the same smoke:
+  - fallback actions are accepted only when explicitly degraded (`fallbackPolicyStatus` in `degraded|failed_verification|completed_degraded`) or `degradedExecution: true`;
+  - increased default `maxToolCalls` to reduce tool budget exhaustion fallback noise.
+- Updated image artifact assertion to accept image manifest evidence with image MIME types (not only `contentBase64`) so modern artifact transport from `run_python` is considered.
+- `npm run smoke:e2b-v3-real-action` now returns an explicit actionable skip in current environment (no public E2B callback available), rather than passing with a mocked parent proxy signal.
+- Previous local validation state remains:
+  - `node --check scripts/e2b-sandbox-v3-real-action-smoke.mjs` ✅
+  - `npm --prefix apps/web run typecheck` ✅
+  - `npm run smoke:sandbox-tool-proxy` ✅ (40/40)
+  - `npm run smoke:swarm-parallel` ✅ (8/8)
+
 ## 2026-06-15 V4.1 Delivery Closure Checkpoint - Evidence gates first slice
 
 - Baseline reviewed: conversation `conv_7d810a1e83cd4de4b612e354c210d3a0` reached real E2B branch completion, but failed closure because sandbox tool/proxy evidence was absent, image/HTML artifact coverage was missing, and branch outputs were runtime summaries rather than substantive deliverables.
