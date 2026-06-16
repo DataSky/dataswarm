@@ -39,6 +39,19 @@ V4.1 turns the V4 E2B ReAct swarm from a runnable branch system into an evidence
 - Increased smoke tool-budget default to lower deterministic invalid-action fallback churn.
 - This step keeps phase 3 evidence honest and blocks mock contamination in the real-action smoke validation path.
 
+## 2026-06-16 Progress Note: local closure smoke revalidation
+
+- 本轮补充并复测了本地关键链路闭环（非 mock 生效）：
+  - `npm --prefix apps/web run typecheck` ✅
+  - `python3 -m py_compile sandbox/agent/dataswarm_sandbox_agent.py` ✅
+  - `npm run smoke:sandbox-tool-proxy` ✅ (40/40)
+  - `npm run smoke:swarm-verifier` ✅ (12/12)
+  - `npm run smoke:swarm-parallel` ✅ (8/8)
+  - `npm run smoke:e2b-v3-real-action` → **SKIP**（当前运行环境未配置可从 E2B 到达的 HTTPS 公网 callback URL）
+- 该阶段结论：
+  - 静态和本地能力/验证器通道维持通过。
+  - 真实 E2B parent-proxy 与复杂基准仍等待有可达公网回调（Cloudflare Tunnel）后再执行。
+
 ## Non-Negotiables
 
 - Do not mark mock results as live.

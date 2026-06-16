@@ -12,6 +12,20 @@
   - `npm run smoke:sandbox-tool-proxy` ✅ (40/40)
   - `npm run smoke:swarm-parallel` ✅ (8/8)
 
+## 2026-06-16 Progress Note: local verification slice rerun
+
+- 本轮重新执行关键闭环检查，结果可追溯：
+  - `npm --prefix apps/web run typecheck` ✅
+  - `python3 -m py_compile sandbox/agent/dataswarm_sandbox_agent.py` ✅
+  - `npm run smoke:sandbox-tool-proxy` ✅ (40/40)
+  - `npm run smoke:swarm-verifier` ✅ (12/12)
+  - `npm run smoke:swarm-parallel` ✅ (8/8)
+  - `npm run smoke:e2b-v3-real-action` -> **SKIP**（当前缺少 HTTPS 公网 callback URL，命中 `non-reachable public URL` 阻断）
+
+  - 当前结论：
+    - 局部能力闭环与验证器闭环为绿灯，可在本地持续迭代。
+    - 实际 E2B 真实可达阶段仍受外网回调条件约束，尚未进入 Phase 6（真实 E2B Parent-Proxy Smoke）和 Phase 7（真实 E2B complex benchmark）验证。
+
 ## 2026-06-15 V4.1 Delivery Closure Checkpoint - Evidence gates first slice
 
 - Baseline reviewed: conversation `conv_7d810a1e83cd4de4b612e354c210d3a0` reached real E2B branch completion, but failed closure because sandbox tool/proxy evidence was absent, image/HTML artifact coverage was missing, and branch outputs were runtime summaries rather than substantive deliverables.
