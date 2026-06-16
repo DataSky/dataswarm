@@ -1259,7 +1259,10 @@ function buildRemediationPlan(input: {
       ],
       recommendedAction:
         "Rerun a real parent-proxy swarm and require capability.invoke/sandbox.tool_proxy completion events plus completed tool_call rows for required tools.",
-      verificationCommands: ["node scripts/parent-tool-proxy-smoke.mjs", "node scripts/e2b-parent-proxy-smoke.mjs"],
+      verificationCommands: [
+        "node scripts/sandbox-tool-proxy-e2e-smoke.mjs",
+        "DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY=1 node scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs",
+      ],
     });
   }
 
@@ -1279,7 +1282,10 @@ function buildRemediationPlan(input: {
       ],
       recommendedAction:
         "Do not accept swarm.verify as V4.1 evidence until gate_coverage.complete=true and all expected hard gates are present.",
-      verificationCommands: ["node scripts/e2b-complex-benchmark-smoke.mjs"],
+      verificationCommands: [
+        "npm run smoke:e2b-branch-complex-benchmark",
+        "npm run smoke:swarm-parallel-e2e",
+      ],
     });
   }
 
@@ -1296,7 +1302,7 @@ function buildRemediationPlan(input: {
       ],
       recommendedAction:
         "Ensure trace.query calls with conversation_id=current/active/this are rewritten to the active conversationId before diagnoseConversation or repository lookup.",
-      verificationCommands: ["node scripts/parent-tool-proxy-smoke.mjs"],
+      verificationCommands: ["node scripts/sandbox-tool-proxy-e2e-smoke.mjs"],
     });
   }
 
@@ -1319,7 +1325,9 @@ function buildRemediationPlan(input: {
       ],
       recommendedAction:
         "Do not accept swarm.reduce output until BranchFinal records are present and reducer_input_coverage shows reducerUsesBranchFinals=true.",
-      verificationCommands: ["node scripts/e2b-complex-benchmark-smoke.mjs"],
+      verificationCommands: [
+        "npm run smoke:e2b-branch-complex-benchmark",
+      ],
     });
   }
 
@@ -1367,7 +1375,10 @@ function buildRemediationPlan(input: {
       ],
       recommendedAction:
         "Rerun the complex E2B swarm only after every branch has the required real_model action count, zero normal-path fallback, parent-proxy completion evidence, and branch-linked artifact coverage.",
-      verificationCommands: ["node scripts/e2b-parent-proxy-smoke.mjs", "node scripts/e2b-complex-benchmark-smoke.mjs"],
+      verificationCommands: [
+        "DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY=1 node scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs",
+        "npm run smoke:e2b-branch-complex-benchmark",
+      ],
     });
   }
 

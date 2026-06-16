@@ -8,6 +8,9 @@ V4.1 turns the V4 E2B ReAct swarm from a runnable branch system into an evidence
   `IMPLEMENTATION_STATUS.md` under "trace.query active-context fallback hardening".
 - 进一步落地：`scripts/sandbox-tool-proxy-e2e-smoke.mjs` 已加入 `trace.query` 的 parent proxy alias 回归（`conversation_id: "current"`），并要求回退事件元数据记录 `usedActiveConversationFallback`，用于 `conversationId` 可追溯性验收。
 - 2026-06-16 追加：默认 real 启动的 mock 污染检测增强。`scripts/dev-real.mjs` 与 `scripts/dev-real-cloudflare-tunnel.mjs` 已同时识别 `DATASWARM_ALLOW_EXPLICIT_MOCK / DATASWARM_MOCK_MODEL / DATASWARM_MOCK_TOOLS` 常见 truthy 值（`1`/`true`/`yes`/`on`），并优化拒绝日志输出为真实环境变量值，避免出现函数定义噪音，便于现场复盘。
+- 2026-06-16 追加：修复 diagnostics 验证建议命令。
+  - `apps/web/src/server/repositories/diagnostics.ts` 中若干 `verificationCommands` 以前引用了不存在的 smoke 名称。
+  - 已改为实际可执行命令（`sandbox-tool-proxy-e2e-smoke`, `e2b-orchestrator-v3-real-action-e2e-smoke`, `smoke:e2b-branch-complex-benchmark`, `smoke:swarm-parallel-e2e`），避免复验路径误导。
 
 ## Current Baseline
 

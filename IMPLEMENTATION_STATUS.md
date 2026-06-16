@@ -4,6 +4,16 @@
 - `DATASWARM_SANDBOX_AGENT_MODEL=mock|deterministic`、`DATASWARM_SANDBOX_TOOL_PROXY=mock|disabled`、`DATASWARM_SANDBOX_PROVIDER=mock` 等仍按既有约束直接拒绝。
 - 目标对齐：继续贯彻“默认真实模式”要求，确保本地服务误启动时有明确、可回放的拒绝行为；拒绝日志会展示真实环境变量取值而非规则函数内容。
 
+## 2026-06-16 Progress Note: diagnostics remediation command accuracy
+
+- 发现并修复 `apps/web/src/server/repositories/diagnostics.ts` 中若干失效的 `verificationCommands` 引用（如 `parent-tool-proxy-smoke`/`e2b-parent-proxy-smoke`/`e2b-complex-benchmark-smoke`）。
+- 已替换为仓库中实际存在的命令：
+  - `node scripts/sandbox-tool-proxy-e2e-smoke.mjs`
+  - `DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY=1 node scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs`
+  - `npm run smoke:e2b-branch-complex-benchmark`
+  - `npm run smoke:swarm-parallel-e2e`
+- 目标：让诊断面“修复建议”可真实执行，减少误导性失败闭环，支撑 real 模式真实复验。。
+
 ## 2026-06-16 Progress Note: complex benchmark blocked by 530 callback while branches are running
 
 - 用 `DATASWARM_PUBLIC_BASE_URL=https://dataswarm-dev.metad.ai DATASWARM_SANDBOX_TOOL_PROXY_URL=https://dataswarm-dev.metad.ai/api/internal/sandbox/tool-proxy DATASWARM_SANDBOX_CAPABILITY_INVOKE_URL=https://dataswarm-dev.metad.ai/api/internal/capabilities/invoke DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY=1 DATASWARM_E2B_ORCHESTRATOR_V3_COMPLEX_BENCHMARK=1 npm run smoke:e2b-branch-complex-benchmark` 跑完真实复杂基准。
