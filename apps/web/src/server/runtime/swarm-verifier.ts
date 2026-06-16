@@ -660,6 +660,9 @@ function buildArtifactSubstanceCheck(input: SwarmVerificationInput): SwarmVerifi
     if (artifact.artifactKind === "branch_runtime_summary") {
       return false;
     }
+    if (artifact.type === "markdown" || artifact.type === "html") {
+      return isSubstantiveTextArtifact(artifact);
+    }
     return asText(artifact.qualitySignals?.substanceStatus, "substantive").toLowerCase() !== "runtime_summary";
   });
   const passed = artifacts.length > 0 && descriptiveArtifacts.length === artifacts.length && runtimeSummaryArtifacts.length === 0;
@@ -670,6 +673,36 @@ function buildArtifactSubstanceCheck(input: SwarmVerificationInput): SwarmVerifi
       ? "Recovered sandbox artifacts included substantive deliverable metadata and no runtime-summary artifacts were counted as deliverables."
       : `${descriptiveArtifacts.length}/${artifacts.length} recovered sandbox artifacts were substantive; runtime-summary artifacts=${runtimeSummaryArtifacts.length}, thin text artifacts=${thinTextArtifacts.length}.`,
   };
+}
+
+function isSubstantiveTextArtifact(artifact: {
+  type: string;
+  artifactKind?: string | null;
+  qualitySignals?: Record<string, unknown>;
+  sourceObservationIds?: string[];
+}) {
+  const status = asText(artifact.qualitySignals?.substanceStatus, "").toLowerCase();
+  if (status !== "substantive") {
+    return false;
+  }
+  if (artifact.qualitySignals?.deliverableEligible !== true) {
+    return false;
+  }
+  const sectionCount = Number(artifact.qualitySignals?.sectionCount ?? 0);
+  const characterCount = Number(artifact.qualitySignals?.characterCount ?? 0);
+  const evidenceCitationCount = Number(artifact.qualitySignals?.evidenceCitationCount ?? 0);
+  const minimumSectionThreshold = Number(artifact.qualitySignals?.minimumSectionThreshold ?? 3) || 3;
+  const minimumCharacterThreshold =
+    Number(artifact.qualitySignals?.minimumCharacterThreshold ?? (artifact.type === "html" ? 900 : 700)) ||
+    (artifact.type === "html" ? 900 : 700);
+  const sourceObservationCount =
+    Number(artifact.qualitySignals?.sourceObservationCount ?? 0) || (artifact.sourceObservationIds ?? []).length;
+  return (
+    artifact.artifactKind !== "branch_runtime_summary" &&
+    sectionCount >= minimumSectionThreshold &&
+    characterCount >= minimumCharacterThreshold &&
+    (sourceObservationCount === 0 || evidenceCitationCount > 0)
+  );
 }
 
 function buildMarkdownSummaryArtifactCoverageCheck(input: SwarmVerificationInput): SwarmVerificationCheck {
@@ -810,14 +843,16 @@ function isSubstantiveTextDeliverableArtifact(artifact: {
   title: string;
   artifactKind?: string | null;
   qualitySignals?: Record<string, unknown>;
+  sourceObservationIds?: string[];
 }) {
   if (artifact.title.trim().length < 12) {
     return false;
   }
-  const substanceStatus = asText(artifact.qualitySignals?.substanceStatus, "substantive").toLowerCase();
-  if (substanceStatus === "runtime_summary" || substanceStatus === "thin") {
-    return false;
+  if (artifact.type === "markdown" || artifact.type === "html") {
+    return isSubstantiveTextArtifact(artifact);
   }
+  const substanceStatus = asText(artifact.qualitySignals?.substanceStatus, "substantive").toLowerCase();
+  if (substanceStatus === "runtime_summary" || substanceStatus === "thin") return false;
   return artifact.artifactKind !== "branch_runtime_summary";
 }
 
@@ -829,7 +864,7 @@ function buildFinalHtmlReportArtifactCoverageCheck(input: SwarmVerificationInput
       (artifact.type === "html" && /final|report|html/i.test(`${artifact.title} ${artifact.mimeType ?? ""}`)),
   );
   const substantiveFinalReports = finalReports.filter(
-    (artifact) => asText(artifact.qualitySignals?.substanceStatus, "substantive").toLowerCase() !== "thin",
+    (artifact) => isSubstantiveTextArtifact(artifact),
   );
   const passed = substantiveFinalReports.length > 0;
   return {

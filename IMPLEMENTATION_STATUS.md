@@ -1,3 +1,10 @@
+## 2026-06-17 Progress Note: hard artifact substance gates for text deliverables
+
+- Tightened `artifact_substance_coverage`, `markdown_summary_artifact_coverage`, and `html_report_artifact_coverage` in `apps/web/src/server/runtime/swarm-verifier.ts`.
+- Markdown/HTML deliverables now require `qualitySignals.substanceStatus=substantive`, `deliverableEligible=true`, minimum section count, minimum character count, and evidence citations when source observations exist.
+- This prevents runtime summaries, thin Markdown, or thin HTML from passing deliverable artifact coverage simply because metadata exists.
+- Updated `scripts/sandbox-tool-proxy-e2e-smoke.mjs` to create a substantive Markdown artifact fixture rather than a two-line proxy artifact, keeping local capability smoke aligned with V4.1 deliverable standards.
+
 ## 2026-06-17 Progress Note: verifier and diagnostics action schema replay coverage
 
 - Extended parent-side swarm event evidence to include `sandbox.agent.loop.started` payloads as `sandboxLoopEvents`, preserving branch id, V4.1 action schema version, canonical action list, repair policy, and budget policy.
