@@ -2610,6 +2610,23 @@ def retry_v3_action_with_model(job: Dict[str, Any], action_prompt: str, previous
 
 def validate_v2_action(action: Dict[str, Any], job: Dict[str, Any], tool_call_count: int, max_tool_calls: int) -> str:
     action_type = as_text(action.get("type"))
+    if action_type == "thought":
+        action_type = "think"
+        action["type"] = "think"
+    if action_type == "final":
+        action_type = "final_answer"
+        action["type"] = "final_answer"
+    if action_type == "artifact.create":
+        action_type = "call_tool"
+        action["type"] = "call_tool"
+        action["toolName"] = action.get("toolName") or "artifact.create"
+        if not isinstance(action.get("input"), dict):
+            action["input"] = {}
+    if action_type in {"web.search", "file.read", "trace.query"}:
+        tool_name = action_type
+        action_type = "call_tool"
+        action["type"] = "call_tool"
+        action["toolName"] = action.get("toolName") or tool_name
     if action_type not in {"think", "use_skill", "call_tool", "read_context", "run_python", "create_artifact", "final_answer"}:
         return f"unsupported action type: {action_type}"
     if action_type == "use_skill" and not as_text(action.get("skillName")):
@@ -2636,6 +2653,23 @@ def validate_v3_action(
     artifacts: List[Dict[str, Any]],
 ) -> str:
     action_type = as_text(action.get("type"))
+    if action_type == "thought":
+        action_type = "think"
+        action["type"] = "think"
+    if action_type == "final":
+        action_type = "final_answer"
+        action["type"] = "final_answer"
+    if action_type == "artifact.create":
+        action_type = "call_tool"
+        action["type"] = "call_tool"
+        action["toolName"] = action.get("toolName") or "artifact.create"
+        if not isinstance(action.get("input"), dict):
+            action["input"] = {}
+    if action_type in {"web.search", "file.read", "trace.query"}:
+        tool_name = action_type
+        action_type = "call_tool"
+        action["type"] = "call_tool"
+        action["toolName"] = action.get("toolName") or tool_name
     supported = {
         "think",
         "use_skill",
