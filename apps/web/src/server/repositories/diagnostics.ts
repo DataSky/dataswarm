@@ -769,11 +769,11 @@ function buildBranchEvidenceMatrix(input: {
     const completedParentObservationForTool = (toolName: string) =>
       completedParentEventsForTool(toolName).some((event) => String(event.observationId ?? "").length > 0);
     const branchActionEventPayloads = input.sandboxActionEvents
-      .map((event) => ({ ...payloadOf(event), eventType: String(event.event_type ?? "") }))
-      .filter((event) => String(event.branchId ?? event.branch_id ?? "") === branchId);
+      .map((event): Record<string, unknown> => ({ ...payloadOf(event), eventType: String(event.event_type ?? "") }))
+      .filter((event) => payloadBranchId(event) === branchId);
     const branchObservationEventPayloads = input.sandboxObservationEvents
-      .map(payloadOf)
-      .filter((event) => String(event.branchId ?? event.branch_id ?? "") === branchId);
+      .map((event): Record<string, unknown> => payloadOf(event))
+      .filter((event) => payloadBranchId(event) === branchId);
     const eventRealModelActionCount = branchActionEventPayloads.filter(
       (event) => String(event.actionSource ?? event.action_source ?? "") === "real_model" && String(event.status ?? "") === "proposed",
     ).length;
@@ -1105,7 +1105,7 @@ function arrayOfRecords(value: unknown) {
   return Array.isArray(value) ? value.filter(isRecord) : [];
 }
 
-function payloadOf(event: Row | undefined) {
+function payloadOf(event: Row | undefined): Record<string, unknown> {
   if (!event) {
     return {};
   }
@@ -1114,6 +1114,10 @@ function payloadOf(event: Row | undefined) {
     return parsed.payload;
   }
   return isRecord(parsed) ? parsed : {};
+}
+
+function payloadBranchId(payload: Record<string, unknown>) {
+  return String(payload.branch_id ?? payload.branchId ?? "");
 }
 
 function recordOrEmpty(value: unknown): Record<string, unknown> {

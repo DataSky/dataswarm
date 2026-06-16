@@ -90,7 +90,9 @@ export type SwarmReductionResult = {
 };
 
 export function buildSwarmReduction(input: SwarmReductionInput): SwarmReductionResult {
-  const branchFinalById = new Map((input.branchFinals ?? []).map((final) => [final.branchId, final]));
+  const branchFinalById = new Map<string, SwarmReductionBranchFinal>(
+    (input.branchFinals ?? []).map((final) => [final.branchId, final]),
+  );
   const branchItems = input.plan.branches.map((branch, index) => {
     const raw = input.observations[index] ?? "";
     const branchFinal = branchFinalById.get(branch.id);
@@ -101,6 +103,7 @@ export function buildSwarmReduction(input: SwarmReductionInput): SwarmReductionR
     const artifactIds = uniqueStrings([...(branchFinal?.artifactIds ?? []), input.artifactIds[index] ?? ""]);
     const sections = normalizeBranchFinalSections(branchFinal, evidenceObservationIds, artifactIds);
     const claims = normalizeBranchFinalClaims(branchFinal, evidenceObservationIds, artifactIds);
+    const source: SwarmReductionItem["source"] = branchFinal ? "branch_final" : "runtime_observation";
     return {
       branchId: branch.id,
       title: branchFinal?.branchTitle ?? branch.title,
@@ -108,7 +111,7 @@ export function buildSwarmReduction(input: SwarmReductionInput): SwarmReductionR
       observationId: evidenceObservationIds[0] ?? extractFirst(raw, /\bobs_[a-z0-9]+\b/i),
       artifactId: artifactIds[0] ?? extractFirst(raw, /\bart_[a-z0-9]+\b/i),
       summary: normalizeSummary(branchFinal?.executiveSummary ?? "") || normalizeSummary(raw) || `${branch.title}: no branch summary recorded.`,
-      source: branchFinal ? "branch_final" : "runtime_observation",
+      source,
       sections,
       claims,
       evidenceObservationIds,

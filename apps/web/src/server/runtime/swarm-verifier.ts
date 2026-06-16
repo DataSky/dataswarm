@@ -43,7 +43,7 @@ export function buildSwarmVerificationGateCoverage(checks: SwarmVerificationChec
   const failedGateIds = checks.filter((check) => check.status === "failed").map((check) => check.id);
   const expectedGateIds = [...V4_1_SWARM_VERIFY_GATE_IDS];
   const missingGateIds = expectedGateIds.filter((id) => !presentGateIds.includes(id));
-  const unexpectedGateIds = presentGateIds.filter((id) => !expectedGateIds.includes(id));
+  const unexpectedGateIds = presentGateIds.filter((id) => !(expectedGateIds as readonly string[]).includes(id));
   return {
     scope: "swarm.verify",
     expectedGateIds,
