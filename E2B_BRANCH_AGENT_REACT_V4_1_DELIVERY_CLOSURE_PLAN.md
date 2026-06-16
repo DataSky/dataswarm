@@ -33,6 +33,31 @@ V4.1 turns the V4 E2B ReAct swarm from a runnable branch system into an evidence
 6. Real E2B parent-proxy smoke through the public Cloudflare tunnel.
 7. Real E2B complex benchmark proving multiple branches, at least three real_model actions per branch, zero normal-path fallback, real parent-proxied web.search evidence, image artifact, Markdown/HTML artifact, final Observation/Artifact citations, and reproducible diagnostics.
 
+## 2026-06-16 Progress Note: complex benchmark exposed real-world callback hard-stop
+
+- 执行命令：
+  - `DATASWARM_PUBLIC_BASE_URL=https://dataswarm-dev.metad.ai DATASWARM_SANDBOX_TOOL_PROXY_URL=https://dataswarm-dev.metad.ai/api/internal/sandbox/tool-proxy DATASWARM_SANDBOX_CAPABILITY_INVOKE_URL=https://dataswarm-dev.metad.ai/api/internal/capabilities/invoke DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY=1 DATASWARM_E2B_ORCHESTRATOR_V3_COMPLEX_BENCHMARK=1 npm run smoke:e2b-branch-complex-benchmark`
+- 关键结果：
+  - Parent reachability check 在脚本起始即 FAIL（`/api/internal/sandbox/health` 返回 `530`），但 run 已发起并进入 `running` 后继续推进；
+  - 创建了 2 个 E2B branch 会话并写入 `run_149f2ac573a5441391455f5327210763`（会话 `conv_e8882bf38a9a4d54ac7e8483190c2846`）；
+  - 16/26 检查失败，主因均为 `parent proxy 回调不可达` 带来的连锁：
+    - `branch started` 的 parent proxy 配置在位；
+    - 但 `sandbox.agent.*`、`branch observation`、`branch completed`、`reduce/verify`、`tool_call`、`capability/tool/proxy` 证据链未继续生成；
+    - 无法生成并统计真实的 `image artifact`、`markdown/html`、`revision/evidence` 验证路径；
+  - 结论：外部入口 530 是阻塞真实复杂基准验收的单点，不是内部 ReAct/工具逻辑退化。
+- 下一动作：
+  - 在 Cloudflare 入口恢复 `public` 健康与 200 可达后，复跑上述 complex benchmark；当前文档中的前序闭环（类型检查、`smoke:sandbox-tool-proxy`、`smoke:swarm-*`）仍保持绿色，不建议以该条失败作为业务回归。
+
+## 2026-06-16 Progress Note: public tunnel command attempts still non-JSON callback
+
+- 执行 `DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY=1 DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY_TUNNEL_COMMAND='cloudflared tunnel --url http://localhost:3234' npm run smoke:e2b-orchestrator-v3-parent-proxy`
+- 结果：trycloudflare 域名回环建立后，`/api/internal/sandbox/health` callback 检查仍失败（`fetch failed`，无法复用为可验证 callback）。
+- 执行 `..._TUNNEL_COMMAND='ssh -p 443 ... a.pinggy.io' npm run smoke:e2b-orchestrator-v3-parent-proxy`
+- 结果：pinggy 回环产出 URL 后，`/api/internal/sandbox/health` 仅有 `status:200` 且响应体无法解析为 JSON，Reachability gate 同样失败。
+- 结论：当前阶段外部回调可达性问题未转化为服务内部退化，属于 tunnel/proxy 通道与健康探测契约适配问题。
+- 下一动作：恢复命名隧道可达后重跑；
+  同时保留 `script/dev` 与 smoke 的 `530/fetch failed/invalid json` 精细日志，作为外部链路恢复验收凭据。
+
 ## 2026-06-16 Progress Note: enforce real proxy reachability in local real-action smoke
 
 - Added explicit guardrails in `scripts/e2b-sandbox-v3-real-action-smoke.mjs` so the local real-action smoke cannot accidentally report success on `host.docker.internal` / localhost callback paths.

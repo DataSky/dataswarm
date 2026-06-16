@@ -1,3 +1,35 @@
+## 2026-06-16 Progress Note: complex benchmark blocked by 530 callback while branches are running
+
+- 用 `DATASWARM_PUBLIC_BASE_URL=https://dataswarm-dev.metad.ai DATASWARM_SANDBOX_TOOL_PROXY_URL=https://dataswarm-dev.metad.ai/api/internal/sandbox/tool-proxy DATASWARM_SANDBOX_CAPABILITY_INVOKE_URL=https://dataswarm-dev.metad.ai/api/internal/capabilities/invoke DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY=1 DATASWARM_E2B_ORCHESTRATOR_V3_COMPLEX_BENCHMARK=1 npm run smoke:e2b-branch-complex-benchmark` 跑完真实复杂基准。
+- 结果是脚本级失败（16/26）但关键事实明确：
+  - `e2b` branch session 已创建并进入运行态（至少 2 个，表明分支并行与 Parent Proxy 起始链路可下发）；
+  - 外部回调健康校验失败：`dataswarm-dev.metad.ai/api/internal/sandbox/health` 返回 `HTTP/2 530`；
+  - 因回调不可达，`sandbox.tool_proxy` / `capability.invoke` / `run_events` 不再持续写入完整父链路证据；
+  - `swarm.reduce`、`swarm.verify` 未拿到完成分支输入，`branch.*` 完整证据面无法进入 pass 判定；
+  - 这是明确的可重现外部可达性阻塞，不是内部模型 action parser/repair/contract 的直接退化。
+- 结论：在当前域名告警态下，继续把 `real E2B parent-proxy + complex benchmark` 标记为“待域名恢复后可复验”；本地与非 parent-proxy 的关键静态及工具闭环仍维持通过。
+
+## 2026-06-16 Progress Note: parent-proxy command-channel hard-stop across providers
+
+- 尝试不同 tunnel 命令后，`DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY_TUNNEL_COMMAND` 均未打通：
+  - `cloudflared tunnel --url http://localhost:3234` 产出 trycloudflare 入口，但 `verifyCallbackReachability` 对 `/api/internal/sandbox/health` 读取到 `fetch failed`。
+  - pinggy 命令 `ssh -p 443 ... a.pinggy.io` 产出 `*.run.pinggy-free.link` 入口，但 `/api/internal/sandbox/health` 返回 200 且 body 无法解析为 JSON（`parsed=false`），导致 reachability gate 未通过。
+- 结论：不是本地 ReAct/Parser 逻辑问题；是隧道/代理层无法稳定产出可直接校验的 callback 结果。
+- 后续动作：
+  - 使用可控的、可返回标准 JSON 健康体的公共入口；或
+  - 在本地验证层面先补充“代理健康响应非 JSON 时的可诊断告警字段”，便于快速分辨是否到达了正确服务。
+
+## 2026-06-16 Progress Note: real-action local smoke remains green
+
+- 执行 `scripts/e2b-sandbox-v3-real-action-smoke.mjs`（真实模型、外部回调配置）返回 PASS：
+  - `realModelActionCount=6`
+  - `fallbackActionCount=0`
+  - `toolCompletedCount=1`
+  - `artifactCreatedCount=1`
+  - `imageArtifactCount=1`
+  - `parentToolProxyMode=parent`
+- 这条记录用于确认：当前代码层的 E2B V3 real-model + real action + parent tool 代理链路可在本地闭环；当前阻塞仍集中于外部回调可达性。 
+
 ## 2026-06-16 Progress Note: parent callback reachability hard-fail gates
 
 - 在 `scripts/e2b-orchestrator-v3-real-action-e2e-smoke.mjs` 增加 `parent proxy` 回调地址可达性验证：
