@@ -14,10 +14,19 @@ const publicBaseUrl =
 const modelName = process.env.DATASWARM_SANDBOX_AGENT_MODEL_NAME || "deepseek-v4-flash";
 const tunnelReadinessTimeoutMs = Number(process.env.DATASWARM_CLOUDFLARE_TUNNEL_READINESS_TIMEOUT_MS ?? 45_000);
 
+const truthyMockValues = new Set(["1", "true", "yes", "on"]);
+
+function isTruthyMockValue(value, allowed = null) {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  if (allowed && allowed.has(normalized)) return false;
+  return truthyMockValues.has(normalized);
+}
+
 const forbiddenMockEnv = [
-  ["DATASWARM_ALLOW_EXPLICIT_MOCK", "1"],
-  ["DATASWARM_MOCK_MODEL", "1"],
-  ["DATASWARM_MOCK_TOOLS", "1"],
+  ["DATASWARM_ALLOW_EXPLICIT_MOCK", (value) => isTruthyMockValue(value)],
+  ["DATASWARM_MOCK_MODEL", (value) => isTruthyMockValue(value)],
+  ["DATASWARM_MOCK_TOOLS", (value) => isTruthyMockValue(value)],
   ["DATASWARM_SANDBOX_PROVIDER", "mock"],
   ["DATASWARM_SANDBOX_AGENT_MODEL", "mock"],
   ["DATASWARM_SANDBOX_AGENT_MODEL", "deterministic"],
@@ -27,7 +36,11 @@ const forbiddenMockEnv = [
 
 const mockViolations = forbiddenMockEnv.filter(([key, forbidden]) => {
   const value = process.env[key];
-  return typeof value === "string" && value.trim().toLowerCase() === forbidden;
+  if (typeof forbidden === "function") {
+    return forbidden(value);
+  }
+  if (typeof value !== "string") return false;
+  return value.trim().toLowerCase() === forbidden;
 });
 
 if (mockViolations.length > 0) {

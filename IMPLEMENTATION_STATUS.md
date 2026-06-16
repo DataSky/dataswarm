@@ -1,3 +1,9 @@
+## 2026-06-16 Progress Note: harden real-startup mock guards
+
+- `scripts/dev-real.mjs` 与 `scripts/dev-real-cloudflare-tunnel.mjs` 的 mock 污染检测已增强：`DATASWARM_ALLOW_EXPLICIT_MOCK / DATASWARM_MOCK_MODEL / DATASWARM_MOCK_TOOLS` 现在识别 `1/true/yes/on` 等常见真值，并继续阻断启动，避免环境变量残留导致默认 real 启动误入 mock 模式。
+- `DATASWARM_SANDBOX_AGENT_MODEL=mock|deterministic`、`DATASWARM_SANDBOX_TOOL_PROXY=mock|disabled`、`DATASWARM_SANDBOX_PROVIDER=mock` 等仍按既有约束直接拒绝。
+- 目标对齐：继续贯彻“默认真实模式”要求，确保本地服务误启动时有明确、可回放的拒绝行为。
+
 ## 2026-06-16 Progress Note: complex benchmark blocked by 530 callback while branches are running
 
 - 用 `DATASWARM_PUBLIC_BASE_URL=https://dataswarm-dev.metad.ai DATASWARM_SANDBOX_TOOL_PROXY_URL=https://dataswarm-dev.metad.ai/api/internal/sandbox/tool-proxy DATASWARM_SANDBOX_CAPABILITY_INVOKE_URL=https://dataswarm-dev.metad.ai/api/internal/capabilities/invoke DATASWARM_E2B_ORCHESTRATOR_V3_PARENT_PROXY=1 DATASWARM_E2B_ORCHESTRATOR_V3_COMPLEX_BENCHMARK=1 npm run smoke:e2b-branch-complex-benchmark` 跑完真实复杂基准。
