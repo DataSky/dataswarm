@@ -34,6 +34,14 @@
   - `the name uniqueStrings is defined multiple times`
 - No live verification claims are made yet; next phases still require real E2B tool/proxy/finality smoke and complex benchmark replay for closure.
 
+## 2026-06-16 V4.1 Evidence Closure Checkpoint
+
+- Repaired artifact provenance continuity in `apps/web/src/server/runtime/swarm.ts`:
+  - `recoverSandboxArtifacts` now persists `sourceObservationIds` into recovered Markdown/HTML and image artifact summaries.
+  - Image recovery metadata now stores `sourceObservationIds`, so parent-side `artifact.create`/`run_python` recovery paths can satisfy `artifact_source_observation_coverage`.
+  - Branch artifact summaries now retain `sourceObservationIds` when sourced from existing DB artifact records (`artifact.sourceObservationIds`).
+- This closes a key verifier failure mode where required markdown/html/image artifacts had valid DB linkage but lost linkability during branch evidence aggregation.
+
 ## 2026-06-16 V4.1 Recovery Checkpoint
 
 - Closed the remaining `apps/web` runtime compile blockers introduced during V4 hardening.

@@ -182,6 +182,7 @@ type BranchArtifactSummary = {
   branchIds?: string[];
   artifactKind?: string | null;
   qualitySignals?: Record<string, unknown>;
+  sourceObservationIds?: string[];
 };
 
 function branchArtifactFromArtifactRecord(artifact: ArtifactRecord, branchId: string): BranchArtifactSummary {
@@ -196,6 +197,7 @@ function branchArtifactFromArtifactRecord(artifact: ArtifactRecord, branchId: st
     branchIds: uniqueStrings([branchId, ...artifact.branchIds]),
     artifactKind: artifact.artifactKind,
     qualitySignals: artifact.qualitySignals,
+    sourceObservationIds: uniqueStrings(artifact.sourceObservationIds),
   };
 }
 
@@ -2225,8 +2227,8 @@ async function recoverSandboxArtifacts(input: {
           sandboxSha256: sandboxArtifact.sha256,
           sandboxBytes: sandboxArtifact.bytes,
           filename: sandboxArtifact.filename,
-          sourceObservationIds: Array.isArray(sandboxArtifact.localSandboxObservationIds)
-            ? sandboxArtifact.localSandboxObservationIds
+        sourceObservationIds: Array.isArray(sandboxArtifact.localSandboxObservationIds)
+            ? sandboxArtifact.localSandboxObservationIds.map(String).filter(Boolean)
             : [],
         },
       });
@@ -2239,6 +2241,9 @@ async function recoverSandboxArtifacts(input: {
         deduped: artifact.deduped,
         branchId: input.branchId,
         branchIds: [input.branchId],
+        sourceObservationIds: Array.isArray(sandboxArtifact.localSandboxObservationIds)
+          ? sandboxArtifact.localSandboxObservationIds.map(String).filter(Boolean)
+          : [],
       });
       if (!artifact.deduped) {
         await publishArtifactEvents({
@@ -2276,6 +2281,9 @@ async function recoverSandboxArtifacts(input: {
         sandboxSha256: sandboxArtifact.sha256,
         sandboxBytes: sandboxArtifact.bytes,
         filename: sandboxArtifact.filename,
+        sourceObservationIds: Array.isArray(sandboxArtifact.localSandboxObservationIds)
+          ? sandboxArtifact.localSandboxObservationIds.map(String).filter(Boolean)
+          : [],
       },
     });
     recovered.push({
@@ -2287,6 +2295,9 @@ async function recoverSandboxArtifacts(input: {
       deduped: artifact.deduped,
       branchId: input.branchId,
       branchIds: [input.branchId],
+      sourceObservationIds: Array.isArray(sandboxArtifact.localSandboxObservationIds)
+        ? sandboxArtifact.localSandboxObservationIds.map(String).filter(Boolean)
+        : [],
     });
     if (!artifact.deduped) {
       await publishArtifactEvents({
@@ -2328,6 +2339,7 @@ type PublicBranchArtifactInput =
       branchIds?: string[];
       artifactKind?: string | null;
       qualitySignals?: Record<string, unknown>;
+      sourceObservationIds?: string[];
     };
 
 function publicBranchArtifact(artifact: PublicBranchArtifactInput) {
@@ -2341,6 +2353,7 @@ function publicBranchArtifact(artifact: PublicBranchArtifactInput) {
     branchIds: artifact.branchIds,
     artifactKind: artifact.artifactKind,
     qualitySignals: artifact.qualitySignals,
+    sourceObservationIds: artifact.sourceObservationIds,
   };
 }
 
